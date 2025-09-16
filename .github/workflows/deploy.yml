@@ -32,9 +32,7 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies
-        run: |
-          cd lei-study-app
-          npm ci
+        run: npm ci
 
       - name: Build application
         env:
@@ -42,9 +40,7 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_DEEPSEEK_API_KEY: ${{ secrets.VITE_DEEPSEEK_API_KEY }}
           VITE_OPENAI_API_KEY: ${{ secrets.VITE_OPENAI_API_KEY }}
-        run: |
-          cd lei-study-app
-          npx vite build --mode production
+        run: npx vite build --mode production
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -52,7 +48,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './lei-study-app/dist'
+          path: './dist'
 
   # Deployment job
   deploy:
