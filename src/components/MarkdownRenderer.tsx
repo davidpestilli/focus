@@ -6,7 +6,7 @@ interface MarkdownRendererProps {
 
 export function MarkdownRenderer({ content }: MarkdownRendererProps) {
   const renderContent = (text: string) => {
-    const elements: JSX.Element[] = [];
+    const elements: React.JSX.Element[] = [];
     const lines = text.split('\n');
     let currentIndex = 0;
 
@@ -95,8 +95,8 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     return elements;
   };
 
-  const formatInlineText = (text: string): JSX.Element[] => {
-    const parts: JSX.Element[] = [];
+  const formatInlineText = (text: string): React.JSX.Element[] => {
+    const parts: React.JSX.Element[] = [];
     let remaining = text;
     let keyIndex = 0;
 
@@ -132,7 +132,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     return parts;
   };
 
-  const renderTable = (tableLines: string[], key: number): JSX.Element => {
+  const renderTable = (tableLines: string[], key: number): React.JSX.Element => {
     if (tableLines.length < 2) return <div key={key} />;
 
     // Parse header

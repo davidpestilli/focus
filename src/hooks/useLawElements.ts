@@ -76,7 +76,11 @@ export function useLawElements(lawId?: string) {
     // Third pass: sort children by order_position
     const sortChildren = (element: LawElement & { children: LawElement[] }) => {
       element.children.sort((a, b) => (a.order_position || 0) - (b.order_position || 0))
-      element.children.forEach(sortChildren)
+      element.children.forEach((child) => {
+        if ('children' in child) {
+          sortChildren(child as LawElement & { children: LawElement[] })
+        }
+      })
     }
 
     rootElements.forEach(sortChildren)

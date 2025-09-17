@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, BookOpen, HelpCircle, Trash2, Eye, EyeOff, Bot, X, Send } from 'lucide-react'
+import { ChevronLeft, BookOpen, HelpCircle, Trash2, Eye, EyeOff, Bot, X, Send, MessageCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useQuestions, type StudyQuestion } from '../hooks/useQuestions'
 import { useLaws } from '../hooks/useLaws'
 import { deepseekService } from '../lib/deepseek'
+import { MarkdownRenderer } from '../components/MarkdownRenderer'
 
 interface LawWithQuestions {
   id: string
@@ -29,13 +30,28 @@ export default function QuestionsPage() {
   const [selectedQuestions, setSelectedQuestions] = useState<Set<string>>(new Set())
   const [highlightedQuestions, setHighlightedQuestions] = useState<Set<string>>(new Set())
   const [aiModalOpen, setAiModalOpen] = useState(false)
+  const [chatModalOpen, setChatModalOpen] = useState(false)
   const [currentQuestionForAI, setCurrentQuestionForAI] = useState<StudyQuestion | null>(null)
+  const [currentQuestionForChat, setCurrentQuestionForChat] = useState<StudyQuestion | null>(null)
   const [aiPrompt, setAiPrompt] = useState('')
+  const [chatPrompt, setChatPrompt] = useState('')
   const [aiResponse, setAiResponse] = useState('')
+  const [chatResponse, setChatResponse] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
   const [conversationHistory, setConversationHistory] = useState<Array<{prompt: string, response: string}>>([])
+  const [chatHistory, setChatHistory] = useState<Array<{type: 'user' | 'ai', message: string}>>([])
+  const [generatedQuestions, setGeneratedQuestions] = useState<Array<{
+    type: 'multiple_choice' | 'true_false' | 'essay'
+    question_text: string
+    options?: { a: string; b: string; c: string; d: string; e: string }
+    correct_answer: string
+    explanation: { general: string; alternatives?: any }
+    tags: string[]
+    topic: string
+  }>>([])
 
-  const { getQuestionsByLaws, getAllQuestions, deleteQuestion, deleteMultipleQuestions, updateQuestion } = useQuestions()
+  const { getQuestionsByLaws, getAllQuestions, deleteQuestion, deleteMultipleQuestions, updateQuestion, saveQuestion } = useQuestions()
   const { laws } = useLaws()
   const navigate = useNavigate()
 
@@ -285,6 +301,165 @@ Por favor, retorne uma questão modificada seguindo exatamente o mesmo formato J
     }
   }
 
+  // Funções para o Chat Modal
+  const handleOpenChatModal = (question: StudyQuestion) => {
+    setCurrentQuestionForChat(question)
+    setChatModalOpen(true)
+    setChatHistory([])
+    setGeneratedQuestions([])
+  }
+
+  const handleCloseChatModal = () => {
+    setChatModalOpen(false)
+    setCurrentQuestionForChat(null)
+    setChatPrompt('')
+    setChatResponse('')
+    setChatHistory([])
+    setGeneratedQuestions([])
+  }
+
+  const handleSendChatMessage = async (message: string) => {
+    if (!currentQuestionForChat || !message.trim()) return
+
+    setChatLoading(true)
+    setChatHistory(prev => [...prev, { type: 'user', message }])
+
+    try {
+      // Preparar contexto completo da questão para o chat
+      const questionContext = {
+        law_name: currentQuestionForChat.law_name,
+        article_number: currentQuestionForChat.article_number,
+        type: currentQuestionForChat.type,
+        question_text: currentQuestionForChat.question_text,
+        options: currentQuestionForChat.options,
+        correct_answer: currentQuestionForChat.correct_answer,
+        explanation: currentQuestionForChat.explanation,
+        tags: currentQuestionForChat.tags,
+        topic: currentQuestionForChat.topic
+      }
+
+      // Preparar histórico do chat
+      const chatHistoryContext = chatHistory.map(item =>
+        `${item.type === 'user' ? 'Usuário' : 'IA'}: ${item.message}`
+      ).join('\n')
+
+      let systemPrompt = `Você é um assistente especializado em questões jurídicas. Você está conversando sobre uma questão específica.
+
+CONTEXTO DA QUESTÃO:
+Lei: ${questionContext.law_name}
+Artigo: ${questionContext.article_number}
+Tipo: ${questionContext.type}
+Texto da questão: ${questionContext.question_text}
+${questionContext.options ? `Alternativas: ${JSON.stringify(questionContext.options, null, 2)}` : ''}
+Resposta correta: ${questionContext.correct_answer}
+Explicação: ${questionContext.explanation.general}
+Tags: ${questionContext.tags.join(', ')}
+Tópico: ${questionContext.topic}
+
+${chatHistoryContext ? `HISTÓRICO DA CONVERSA:\n${chatHistoryContext}\n\n` : ''}`
+
+      // Verificar se é um prompt de criação de questões
+      if (message.toLowerCase().includes('criar') && (message.toLowerCase().includes('questão') || message.toLowerCase().includes('questões'))) {
+        systemPrompt += `
+IMPORTANTE: O usuário está pedindo para criar novas questões. Você deve retornar questões em formato JSON seguindo exatamente esta estrutura:
+
+[
+  {
+    "type": "multiple_choice" | "true_false" | "essay",
+    "question_text": "texto da questão",
+    "options": {
+      "a": "alternativa a",
+      "b": "alternativa b",
+      "c": "alternativa c",
+      "d": "alternativa d",
+      "e": "alternativa e"
+    },
+    "correct_answer": "a",
+    "explanation": {
+      "general": "explicação geral",
+      "alternatives": {
+        "a": "por que A está correta",
+        "b": "por que B está incorreta",
+        "c": "por que C está incorreta",
+        "d": "por que D está incorreta",
+        "e": "por que E está incorreta"
+      }
+    },
+    "tags": ["tag1", "tag2"],
+    "topic": "tópico da questão"
+  }
+]
+
+Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorne APENAS o array JSON, sem texto adicional.`
+      }
+
+      const response = await deepseekService.chat([
+        {
+          role: 'system',
+          content: systemPrompt
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ])
+
+      setChatHistory(prev => [...prev, { type: 'ai', message: response }])
+
+      // Se a resposta parece ser questões em JSON, tentar fazer parse
+      if (message.toLowerCase().includes('criar') && (message.toLowerCase().includes('questão') || message.toLowerCase().includes('questões'))) {
+        try {
+          const questions = JSON.parse(response)
+          if (Array.isArray(questions)) {
+            setGeneratedQuestions(questions)
+          }
+        } catch (e) {
+          // Se não conseguir fazer parse, não é um problema - a resposta será exibida normalmente
+        }
+      }
+
+    } catch (error) {
+      console.error('Erro ao comunicar com IA:', error)
+      setChatHistory(prev => [...prev, { type: 'ai', message: 'Erro ao comunicar com a IA. Tente novamente.' }])
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const handleSaveGeneratedQuestion = async (questionData: any) => {
+    if (!currentQuestionForChat) return
+
+    try {
+      const questionToSave = {
+        law_element_id: currentQuestionForChat.law_element_id,
+        law_id: currentQuestionForChat.law_id,
+        law_name: currentQuestionForChat.law_name,
+        article_number: currentQuestionForChat.article_number,
+        type: questionData.type,
+        question_text: questionData.question_text,
+        options: questionData.options,
+        correct_answer: questionData.correct_answer,
+        explanation: questionData.explanation,
+        tags: questionData.tags,
+        topic: questionData.topic
+      }
+
+      const success = await saveQuestion(questionToSave)
+      if (success) {
+        alert('Questão salva com sucesso!')
+        // Remover questão da lista de geradas
+        setGeneratedQuestions(prev => prev.filter(q => q !== questionData))
+        // Recarregar dados
+        await loadLawsWithQuestions()
+      } else {
+        alert('Erro ao salvar questão. Tente novamente.')
+      }
+    } catch (error) {
+      console.error('Erro ao salvar questão:', error)
+      alert('Erro ao salvar questão. Tente novamente.')
+    }
+  }
+
   const handleArticleToggle = (articleNumber: string) => {
     setSelectedArticles(prev => {
       const newSet = new Set(prev)
@@ -397,6 +572,7 @@ Por favor, retorne uma questão modificada seguindo exatamente o mesmo formato J
           </div>
         </div>
       </div>
+
 
       {/* Content */}
       <div className="flex-1 overflow-hidden p-6">
@@ -736,6 +912,13 @@ Por favor, retorne uma questão modificada seguindo exatamente o mesmo formato J
                               <Bot className="h-4 w-4" />
                             </button>
                             <button
+                              onClick={() => handleOpenChatModal(question)}
+                              className="p-2.5 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-all duration-200 border border-blue-200"
+                              title="Conversar com IA sobre esta questão"
+                            >
+                              <MessageCircle className="h-4 w-4" />
+                            </button>
+                            <button
                               onClick={() => handleDeleteQuestion(question.id)}
                               className="p-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-all duration-200"
                               title="Deletar questão"
@@ -962,6 +1145,205 @@ Por favor, retorne uma questão modificada seguindo exatamente o mesmo formato J
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Chat com IA */}
+      {chatModalOpen && currentQuestionForChat && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+            {/* Header do Modal */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Conversar com IA sobre a Questão
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  {currentQuestionForChat.law_name} - Artigo {currentQuestionForChat.article_number}
+                </p>
+              </div>
+              <button
+                onClick={handleCloseChatModal}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Conteúdo do Modal */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Lado esquerdo - Chat */}
+              <div className="flex-1 flex flex-col">
+                {/* Área de conversa */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {/* Prompts pré-prontos */}
+                  {chatHistory.length === 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">Prompts rápidos:</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {[
+                          'Pedir maiores explicações',
+                          'Criação de novas questões',
+                          'Pedir exemplos práticos',
+                          ...(currentQuestionForChat.type === 'multiple_choice' ? ['Explique cada uma das alternativas'] : [])
+                        ].map((prompt) => (
+                          <button
+                            key={prompt}
+                            onClick={() => handleSendChatMessage(prompt)}
+                            className="px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-left border border-blue-200"
+                          >
+                            {prompt}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="border-t border-gray-200 pt-3">
+                        <p className="text-xs text-gray-500">
+                          Ou digite sua própria pergunta abaixo
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Histórico de conversa */}
+                  {chatHistory.map((message, index) => (
+                    <div
+                      key={index}
+                      className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-3xl p-3 rounded-lg ${
+                          message.type === 'user'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-100 text-gray-900'
+                        }`}
+                      >
+                        {message.type === 'user' ? (
+                          <p className="text-sm whitespace-pre-wrap text-white">{message.message}</p>
+                        ) : (
+                          <div className="text-sm">
+                            <MarkdownRenderer content={message.message} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Indicador de carregamento */}
+                  {chatLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-gray-100 p-3 rounded-lg">
+                        <div className="flex items-center space-x-2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                          <span className="text-sm text-gray-600">IA está digitando...</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Input de mensagem */}
+                <div className="border-t border-gray-200 p-4">
+                  <div className="flex space-x-3">
+                    <input
+                      type="text"
+                      value={chatPrompt}
+                      onChange={(e) => setChatPrompt(e.target.value)}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          if (chatPrompt.trim()) {
+                            handleSendChatMessage(chatPrompt)
+                            setChatPrompt('')
+                          }
+                        }
+                      }}
+                      placeholder="Digite sua pergunta..."
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      disabled={chatLoading}
+                    />
+                    <button
+                      onClick={() => {
+                        if (chatPrompt.trim()) {
+                          handleSendChatMessage(chatPrompt)
+                          setChatPrompt('')
+                        }
+                      }}
+                      disabled={chatLoading || !chatPrompt.trim()}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {chatLoading ? (
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lado direito - Questões geradas (se houver) */}
+              {generatedQuestions.length > 0 && (
+                <div className="w-1/2 border-l border-gray-200 bg-gray-50">
+                  <div className="p-4 border-b border-gray-200">
+                    <h4 className="text-sm font-medium text-gray-900">Questões Geradas</h4>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {generatedQuestions.length} questão(ões) criada(s)
+                    </p>
+                  </div>
+                  <div className="p-4 overflow-y-auto max-h-96 space-y-4">
+                    {generatedQuestions.map((question, index) => (
+                      <div key={index} className="bg-white rounded-lg p-4 border border-gray-200">
+                        <div className="flex items-start justify-between mb-3">
+                          <span className="text-sm font-medium text-gray-900">
+                            Questão {index + 1} - {question.type.replace('_', ' ')}
+                          </span>
+                          <button
+                            onClick={() => handleSaveGeneratedQuestion(question)}
+                            className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                          >
+                            Inserir no Banco
+                          </button>
+                        </div>
+                        <p className="text-sm text-gray-800 mb-2">{question.question_text}</p>
+
+                        {/* Opções para múltipla escolha */}
+                        {question.type === 'multiple_choice' && question.options && (
+                          <div className="space-y-1 mb-2">
+                            {Object.entries(question.options).map(([key, value]) => (
+                              <div
+                                key={key}
+                                className={`text-xs p-1 rounded ${
+                                  key === question.correct_answer
+                                    ? 'bg-green-100 text-green-800'
+                                    : 'bg-gray-100 text-gray-700'
+                                }`}
+                              >
+                                <span className="font-medium uppercase">{key})</span> {value}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="text-xs text-gray-600">
+                          <span className="font-medium">Resposta:</span> {question.correct_answer}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer do Modal */}
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={handleCloseChatModal}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>
