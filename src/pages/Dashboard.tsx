@@ -84,35 +84,14 @@ export default function Dashboard() {
                 <div className="p-6">
                   <div className="flex items-center">
                     <div className="flex-shrink-0">
-                      <Plus className="h-8 w-8 text-indigo-600" />
+                      <Plus className="h-8 w-8 text-purple-600" />
                     </div>
                     <div className="ml-4">
                       <h3 className="text-lg font-medium text-gray-900">
-                        Adicionar Concurso
+                        Concurso
                       </h3>
                       <p className="text-sm text-gray-500">
                         Cadastre um novo concurso público
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => navigate('/contests')}
-              >
-                <div className="p-6">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <Search className="h-8 w-8 text-green-600" />
-                    </div>
-                    <div className="ml-4">
-                      <h3 className="text-lg font-medium text-gray-900">
-                        Acessar Concurso
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        Acesse concursos já cadastrados
                       </p>
                     </div>
                   </div>

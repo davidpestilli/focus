@@ -1,24 +1,49 @@
-import React, { useState } from 'react'
-import { ArrowLeft, Trophy, Plus, Calendar, Users } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { ArrowLeft, Trophy, Plus, Calendar, Users, BookOpen, Settings, MessageSquare, Bot } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useContests } from '../hooks/useContests'
-import type { Contest } from '../types/database'
+import { useLawElements } from '../hooks/useLawElements'
+import { useContestLaws } from '../hooks/useContestLaws'
+import ContestLawSelector from '../components/ContestLawSelector'
+import LawHierarchy from '../components/LawHierarchy'
+import { AITools } from '../components/AITools'
+import type { Contest, Law, LawElement } from '../types/database'
+
+type ViewMode = 'list' | 'form' | 'contest-detail' | 'add-law' | 'study-law'
 
 export default function ContestsPage() {
-  const { goBack, setSelectedContest } = useApp()
+  const navigate = useNavigate()
+  const { setSelectedContest } = useApp()
   const { contests, loading, createContest } = useContests()
-  const [showForm, setShowForm] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [selectedContest, setSelectedContestLocal] = useState<Contest | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     active: true
   })
+  const { contestLaws: contestLawsFromDB, loading: contestLawsLoading, addLawElementsToContest, getContestLawsByLaw } = useContestLaws(selectedContest?.id)
+  const [contestLaws, setContestLaws] = useState<Array<{law: Law, selectedElements: LawElement[]}>>([])  // Local state for display
+  const [studyingLaw, setStudyingLaw] = useState<{law: Law, selectedElements: LawElement[]} | null>(null)
+  const [selectedLawElement, setSelectedLawElement] = useState<LawElement | null>(null)
+
+  const { elements: studyLawElements, loading: studyElementsLoading, buildHierarchy: buildStudyHierarchy } = useLawElements(studyingLaw?.law.id)
+
+  // Carregar leis do concurso quando o concurso for selecionado
+  useEffect(() => {
+    if (selectedContest && !contestLawsLoading) {
+      // Reconstruir formato esperado a partir dos dados do banco
+      const lawsFromDB = getContestLawsByLaw()
+      setContestLaws(lawsFromDB)
+    }
+  }, [contestLawsFromDB, selectedContest, contestLawsLoading])
 
   const handleCreateContest = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
       await createContest(formData)
-      setShowForm(false)
+      setViewMode('list')
       setFormData({ name: '', description: '', active: true })
     } catch (error) {
       console.error('Erro ao criar concurso:', error)
@@ -26,43 +51,272 @@ export default function ContestsPage() {
   }
 
   const handleContestSelect = (contest: Contest) => {
+    setSelectedContestLocal(contest)
     setSelectedContest(contest)
-    // TODO: Navigate to contest details page
+    setViewMode('contest-detail')
+    // Limpar estado local - será recarregado pelo useEffect
+    setContestLaws([])
+    setStudyingLaw(null)
+    setSelectedLawElement(null)
+  }
+
+  const handleAddLawToContest = () => {
+    setViewMode('add-law')
+  }
+
+  const handleSaveContestLaw = async (contestLaw: {law: Law, selectedElements: LawElement[]}) => {
+    if (!selectedContest) return
+
+    try {
+      // Extrair IDs dos elementos selecionados
+      const elementIds = contestLaw.selectedElements.map(element => element.id)
+
+      // Salvar no banco de dados
+      await addLawElementsToContest(selectedContest.id, elementIds)
+
+      // Atualizar estado local para exibição imediata
+      setContestLaws(prev => [...prev, contestLaw])
+      setViewMode('contest-detail')
+    } catch (error) {
+      console.error('Erro ao salvar lei no concurso:', error)
+      alert('Erro ao salvar lei no concurso. Tente novamente.')
+    }
+  }
+
+  const handleCancelAddLaw = () => {
+    setViewMode('contest-detail')
+  }
+
+  const handleBackToList = () => {
+    setViewMode('list')
+    setSelectedContestLocal(null)
+    setContestLaws([])
+    setStudyingLaw(null)
+    setSelectedLawElement(null)
+  }
+
+  const handleStudyLaw = (contestLaw: {law: Law, selectedElements: LawElement[]}) => {
+    setStudyingLaw(contestLaw)
+    setSelectedLawElement(null)
+    setViewMode('study-law')
+  }
+
+  const handleBackToContest = () => {
+    setViewMode('contest-detail')
+    setStudyingLaw(null)
+    setSelectedLawElement(null)
+  }
+
+  const handleElementSelect = (element: LawElement) => {
+    setSelectedLawElement(element)
+  }
+
+  // Função para encontrar todos os descendentes de um elemento em ordem hierárquica
+  const findAllDescendants = (elementId: string, allElements: LawElement[]): LawElement[] => {
+    const descendants: LawElement[] = []
+
+    // Encontrar filhos diretos ordenados por order_position
+    const children = allElements
+      .filter(el => el.parent_id === elementId)
+      .sort((a, b) => {
+        const aPos = a.order_position || 0
+        const bPos = b.order_position || 0
+        return aPos - bPos
+      })
+
+    // Para cada filho, adicionar ele primeiro, depois seus descendentes
+    children.forEach(child => {
+      descendants.push(child)
+      // Recursivamente adicionar descendentes do filho
+      const childDescendants = findAllDescendants(child.id, allElements)
+      descendants.push(...childDescendants)
+    })
+
+    return descendants
+  }
+
+  // Função para obter conteúdo completo incluindo toda hierarquia descendente
+  const getFullHierarchicalContent = (element: LawElement) => {
+    if (!element || !studyingLaw) return ''
+
+    const selectedIds = new Set(studyingLaw.selectedElements.map(el => el.id))
+    let content = ''
+
+    // Para o elemento principal, mostrar apenas o content (title já é exibido no cabeçalho)
+    // Para subsection, não mostrar nada aqui pois title === content e title já aparece no header
+    if (element.content && element.element_type !== 'subsection') {
+      content += `${element.content}\n`
+    }
+
+    // Encontrar todos os descendentes em ordem hierárquica
+    const descendants = findAllDescendants(element.id, studyLawElements)
+
+    // Filtrar apenas descendentes que foram selecionados ou são filhos diretos de elementos selecionados
+    const relevantDescendants = descendants.filter(desc => {
+      // Se o descendente foi selecionado, incluir
+      if (selectedIds.has(desc.id)) return true
+
+      // Se o elemento atual foi selecionado, incluir todos os seus descendentes
+      if (selectedIds.has(element.id)) return true
+
+      // Caso contrário, não incluir
+      return false
+    })
+
+    // Adicionar conteúdo de cada descendente relevante mantendo a estrutura hierárquica
+    relevantDescendants.forEach((desc, index) => {
+      if (index > 0 || content.length > 0) {
+        content += '\n'
+      }
+
+      // Para elementos numerados, mostrar o identificador (título) seguido do conteúdo
+      if (['article', 'paragraph', 'clause', 'item', 'subitem'].includes(desc.element_type)) {
+        if (desc.title) {
+          content += `${desc.title}\n`
+        }
+        if (desc.content && desc.content !== desc.title) {
+          content += `${desc.content}\n`
+        }
+      } else {
+        // Para elementos descritivos (title, chapter, subsection, etc.)
+        // Para subsection, mostrar apenas uma vez se title === content
+        // Para outros (title, chapter), mostrar title seguido do content
+        if (desc.element_type === 'subsection') {
+          const displayText = desc.content || desc.title
+          if (displayText) {
+            content += `${displayText}\n`
+          }
+        } else {
+          // Para title, chapter, etc. mostrar title seguido do content se diferentes
+          if (desc.title) {
+            content += `${desc.title}\n`
+          }
+          if (desc.content && desc.content !== desc.title) {
+            content += `${desc.content}\n`
+          }
+        }
+      }
+    })
+
+    return content.trim()
+  }
+
+  // Função para truncar conteúdo longo
+  const getTruncatedContent = (fullContent: string, maxLength: number = 2000) => {
+    if (fullContent.length <= maxLength) {
+      return { content: fullContent, isTruncated: false }
+    }
+
+    return {
+      content: fullContent.substring(0, maxLength) + '...',
+      isTruncated: true,
+      totalLength: fullContent.length
+    }
+  }
+
+  // Filtrar apenas os elementos selecionados para o concurso
+  const getFilteredHierarchy = () => {
+    if (!studyingLaw || !studyLawElements) return []
+
+    const selectedIds = new Set(studyingLaw.selectedElements.map(el => el.id))
+
+    // Função para verificar se um elemento deve ser incluído
+    const shouldIncludeElement = (element: LawElement): boolean => {
+      // Se o elemento foi diretamente selecionado, incluir
+      if (selectedIds.has(element.id)) return true
+
+      // Se o elemento é ancestral de algum elemento selecionado, incluir apenas como contexto
+      const descendants = findAllDescendants(element.id, studyLawElements)
+      return descendants.some(desc => selectedIds.has(desc.id))
+    }
+
+    // Construir hierarquia filtrada recursivamente
+    const buildFilteredHierarchy = (elements: (LawElement & { children?: LawElement[] })[]): (LawElement & { children?: LawElement[] })[] => {
+      return elements
+        .filter(shouldIncludeElement)
+        .map(element => {
+          const filteredChildren = element.children ? buildFilteredHierarchy(element.children) : []
+
+          return {
+            ...element,
+            children: filteredChildren.length > 0 ? filteredChildren : undefined
+          }
+        })
+    }
+
+    return buildFilteredHierarchy(buildStudyHierarchy())
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
+      <div className="bg-white border-b border-gray-200 px-8 py-6 flex-shrink-0 shadow-sm">
+        <div className="flex items-center justify-between max-w-7xl mx-auto">
+          <div className="flex items-center space-x-6">
+            {viewMode === 'contest-detail' ? (
               <button
-                onClick={goBack}
-                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                onClick={handleBackToList}
+                className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-md transition-all duration-200"
               >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Voltar
+                <ArrowLeft className="h-5 w-5 mr-2" />
+                <span className="font-medium">Voltar aos Concursos</span>
               </button>
-              <h1 className="text-xl font-semibold text-gray-900">
-                Concursos Públicos
+            ) : viewMode === 'study-law' ? (
+              <button
+                onClick={handleBackToContest}
+                className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-md transition-all duration-200"
+              >
+                <ArrowLeft className="h-5 w-5 mr-2" />
+                <span className="font-medium">Voltar ao Concurso</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('/')}
+                className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-md transition-all duration-200"
+              >
+                <ArrowLeft className="h-5 w-5 mr-2" />
+                <span className="font-medium">Voltar ao Dashboard</span>
+              </button>
+            )}
+            <div className="border-l border-gray-300 pl-6">
+              <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
+                {viewMode === 'contest-detail'
+                  ? selectedContest?.name
+                  : viewMode === 'study-law'
+                  ? studyingLaw?.law.name
+                  : 'Concursos'
+                }
               </h1>
+              <p className="text-base text-gray-600 mt-2 font-medium">
+                {viewMode === 'contest-detail'
+                  ? 'Configure as leis e elementos do concurso'
+                  : viewMode === 'study-law'
+                  ? 'Explore a estrutura e conteúdo da lei selecionada'
+                  : 'Gerencie seus concursos públicos'
+                }
+              </p>
             </div>
-
+          </div>
+          {viewMode === 'list' && (
             <button
-              onClick={() => setShowForm(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              onClick={() => setViewMode('form')}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
             >
               <Plus className="h-4 w-4 mr-2" />
               Novo Concurso
             </button>
-          </div>
+          )}
         </div>
       </div>
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-        {showForm ? (
+        {viewMode === 'add-law' ? (
+          <ContestLawSelector
+            onSave={handleSaveContestLaw}
+            onCancel={handleCancelAddLaw}
+          />
+        ) : viewMode === 'form' ? (
           <div className="max-w-2xl mx-auto">
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-medium text-gray-900 mb-4">
@@ -115,7 +369,7 @@ export default function ContestsPage() {
                 <div className="flex justify-end space-x-3">
                   <button
                     type="button"
-                    onClick={() => setShowForm(false)}
+                    onClick={() => setViewMode('list')}
                     className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
                   >
                     Cancelar
@@ -128,6 +382,251 @@ export default function ContestsPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        ) : viewMode === 'contest-detail' && selectedContest ? (
+          /* Contest Detail View */
+          <div className="space-y-6">
+            {/* Contest Info */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">{selectedContest.name}</h2>
+                  {selectedContest.description && (
+                    <p className="text-gray-600 mt-1">{selectedContest.description}</p>
+                  )}
+                </div>
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                  selectedContest.active
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-gray-100 text-gray-800'
+                }`}>
+                  {selectedContest.active ? 'Ativo' : 'Inativo'}
+                </span>
+              </div>
+            </div>
+
+            {/* Laws Section */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+              <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <BookOpen className="h-5 w-5 text-gray-700" />
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">Leis do Concurso</h3>
+                      <p className="text-sm text-gray-600">
+                        {contestLaws.length} lei(s) adicionada(s)
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAddLawToContest}
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Adicionar Lei
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                {contestLaws.length === 0 ? (
+                  <div className="text-center py-8">
+                    <BookOpen className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                    <h4 className="text-lg font-medium text-gray-900 mb-2">
+                      Nenhuma lei adicionada ainda
+                    </h4>
+                    <p className="text-gray-600 mb-4">
+                      Adicione leis ao concurso para que os participantes possam estudar.
+                    </p>
+                    <button
+                      onClick={handleAddLawToContest}
+                      className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Adicionar Primeira Lei
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {contestLaws.map((contestLaw, index) => (
+                      <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center space-x-2">
+                            <BookOpen className="h-5 w-5 text-blue-600" />
+                            <h4 className="font-medium text-gray-900">{contestLaw.law.name}</h4>
+                          </div>
+                          <button className="text-gray-400 hover:text-gray-600">
+                            <Settings className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          <p>{contestLaw.selectedElements.length} elementos selecionados</p>
+                        </div>
+                        <div className="mt-3 flex justify-between items-center">
+                          <span className="text-xs text-gray-500">
+                            Adicionada em {new Date().toLocaleDateString('pt-BR')}
+                          </span>
+                          <button
+                            onClick={() => handleStudyLaw(contestLaw)}
+                            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                          >
+                            Estudar →
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : viewMode === 'study-law' && studyingLaw ? (
+          /* Study Law View - 3 Containers */
+          <div className="h-[calc(100vh-8rem)] flex gap-6">
+            {/* Law Hierarchy - Left Side - 38% */}
+            <div className="w-[38%] flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <BookOpen className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Estrutura da Lei
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        Elementos selecionados para o concurso
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 h-[calc(100%-4rem)] overflow-y-auto">
+                  {studyElementsLoading ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+                      <p className="mt-2 text-sm text-gray-600">Carregando estrutura...</p>
+                    </div>
+                  ) : (
+                    <LawHierarchy
+                      elements={getFilteredHierarchy()}
+                      onElementSelect={handleElementSelect}
+                      selectedElement={selectedLawElement}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Selected Element Details - Center - 31% */}
+            <div className="w-[31%] flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                {/* Header fixo */}
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <MessageSquare className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Elemento Selecionado
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        {selectedLawElement ? 'Visualizando conteúdo completo' : 'Nenhum elemento selecionado'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedLawElement ? (
+                  <>
+                    {/* Conteúdo com scroll */}
+                    <div className="flex-1 overflow-y-auto p-6">
+                      <div>
+                        <h5 className="text-lg font-semibold text-gray-900 mt-1">
+                          {selectedLawElement.title}
+                        </h5>
+
+                        {(() => {
+                          const fullContent = getFullHierarchicalContent(selectedLawElement)
+                          const { content, isTruncated, totalLength } = getTruncatedContent(fullContent, 2000)
+
+                          return (
+                            <div className="prose prose-sm max-w-none">
+                              <p className="text-gray-700 whitespace-pre-wrap text-sm">
+                                {content}
+                              </p>
+                              {isTruncated && (
+                                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
+                                  <p className="text-xs text-blue-700">
+                                    <strong>Conteúdo truncado para exibição</strong><br/>
+                                    Total: {totalLength?.toLocaleString()} caracteres. O conteúdo completo será usado para contextualizar perguntas à IA.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* Estado vazio */
+                  <div className="flex-1 flex items-center justify-center p-6">
+                    <div className="text-center text-gray-500">
+                      <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <p>Selecione um elemento da lei para ver detalhes</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* AI Tools - Right Side - 29% */}
+            <div className="w-[29%] flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                {/* Header fixo */}
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <Bot className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Ferramentas de IA
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        {selectedLawElement ? 'Interaja com o conteúdo' : 'Selecione um elemento'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedLawElement ? (
+                  <AITools
+                    lawContent={getFullHierarchicalContent(selectedLawElement)}
+                    lawTitle={selectedLawElement.title}
+                    selectedElement={{
+                      id: selectedLawElement.id,
+                      law_id: selectedLawElement.law_id,
+                      element_type: selectedLawElement.element_type,
+                      element_number: selectedLawElement.element_number || '',
+                      title: selectedLawElement.title,
+                      content: selectedLawElement.content
+                    }}
+                  />
+                ) : (
+                  /* Estado vazio */
+                  <div className="flex-1 flex items-center justify-center p-6">
+                    <div className="text-center text-gray-500">
+                      <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <p className="text-sm">Selecione um elemento para usar as ferramentas de IA</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ) : (
@@ -147,7 +646,7 @@ export default function ContestsPage() {
                   Comece criando seu primeiro concurso público.
                 </p>
                 <button
-                  onClick={() => setShowForm(true)}
+                  onClick={() => setViewMode('form')}
                   className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
                 >
                   <Plus className="h-4 w-4 mr-2" />

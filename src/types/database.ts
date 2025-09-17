@@ -35,6 +35,15 @@ export interface Contest {
   created_at: string
 }
 
+export interface ContestLaw {
+  id: string
+  contest_id: string
+  law_id: string
+  law_name: string
+  selected_elements: string[] // IDs dos elementos selecionados
+  created_at: string
+}
+
 export interface StudyQuestion {
   id: string
   law_element_id: string
