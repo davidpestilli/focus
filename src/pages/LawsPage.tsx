@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { ArrowLeft, BookOpen, Plus, MessageSquare } from 'lucide-react'
+import { ArrowLeft, BookOpen, Plus, MessageSquare, Bot } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useLaws } from '../hooks/useLaws'
 import { useLawElements } from '../hooks/useLawElements'
@@ -9,9 +10,10 @@ import { AITools } from '../components/AITools'
 import type { Law, LawElement } from '../types/database'
 
 export default function LawsPage() {
-  const { goBack, selectedLaw, setSelectedLaw, selectedLawElement, setSelectedLawElement } = useApp()
+  const { selectedLaw, setSelectedLaw, selectedLawElement, setSelectedLawElement } = useApp()
   const { laws, loading: lawsLoading } = useLaws()
   const { elements, loading: elementsLoading, buildHierarchy } = useLawElements(selectedLaw?.id)
+  const navigate = useNavigate()
 
   const [viewMode, setViewMode] = useState<'select' | 'study'>('select')
 
@@ -129,73 +131,104 @@ export default function LawsPage() {
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b flex-shrink-0">
-        <div className="w-full px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={goBack}
-                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Voltar
-              </button>
-              <h1 className="text-xl font-semibold text-gray-900">
-                Acessar Lei
+      <div className="bg-white border-b border-gray-200 px-8 py-6 flex-shrink-0 shadow-sm">
+        <div className="flex items-center justify-between max-w-7xl mx-auto">
+          <div className="flex items-center space-x-6">
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-md transition-all duration-200"
+            >
+              <ArrowLeft className="h-5 w-5 mr-2" />
+              <span className="font-medium">Voltar ao Dashboard</span>
+            </button>
+            <div className="border-l border-gray-300 pl-6">
+              <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
+                {viewMode === 'select' ? 'Acessar Lei' : selectedLaw?.name}
               </h1>
+              <p className="text-base text-gray-600 mt-2 font-medium">
+                {viewMode === 'select'
+                  ? 'Selecione uma lei para estudar e explorar'
+                  : 'Explore a estrutura e conteúdo da lei selecionada'
+                }
+              </p>
             </div>
+          </div>
 
-            {viewMode === 'study' && selectedLaw && (
-              <div className="flex items-center space-x-4">
-                <div className="text-sm text-gray-600">
-                  <BookOpen className="inline h-4 w-4 mr-1" />
-                  {selectedLaw.name}
+          {viewMode === 'study' && selectedLaw && (
+            <div className="flex items-center space-x-4">
+              <div className="text-right">
+                <div className="flex items-center space-x-2 text-gray-600 mb-1">
+                  <BookOpen className="h-4 w-4" />
+                  <span className="text-sm font-medium">Lei selecionada</span>
                 </div>
                 <button
                   onClick={() => setViewMode('select')}
-                  className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all duration-200 border border-gray-200 text-sm font-medium"
                 >
                   Trocar Lei
                 </button>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Main Content */}
       <main className="flex-1 w-full p-6 overflow-hidden">
         {viewMode === 'select' ? (
-          <div className="max-w-2xl mx-auto">
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-medium text-gray-900 mb-4">
-                Selecionar Lei para Estudo
-              </h2>
+          <div className="max-w-4xl mx-auto">
+            <div className="mb-8">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">
+                        Leis Disponíveis
+                      </h2>
+                      <p className="text-base text-gray-600 font-medium">
+                        Selecione uma lei para iniciar o estudo detalhado
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-3xl font-bold text-gray-900">
+                        {laws.length}
+                      </div>
+                      <div className="text-sm text-gray-600 font-medium">
+                        leis disponíveis
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
 
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100">
               {lawsLoading ? (
-                <div className="text-center py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
-                  <p className="mt-2 text-sm text-gray-600">Carregando leis...</p>
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 mx-auto"></div>
+                  <p className="mt-4 text-base text-gray-600 font-medium">Carregando leis...</p>
                 </div>
               ) : laws.length === 0 ? (
-                <div className="text-center py-8">
-                  <BookOpen className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                <div className="text-center py-12">
+                  <BookOpen className="h-16 w-16 mx-auto text-gray-300 mb-6" />
+                  <h3 className="text-xl font-bold text-gray-900 mb-3">
                     Nenhuma lei encontrada
                   </h3>
-                  <p className="text-gray-600 mb-4">
+                  <p className="text-gray-600 mb-6 text-base">
                     Não há leis cadastradas no sistema ainda.
                   </p>
-                  <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
-                    <Plus className="h-4 w-4 mr-2" />
+                  <button className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-gray-900 hover:bg-gray-800 transition-all duration-200">
+                    <Plus className="h-5 w-5 mr-2" />
                     Adicionar Lei
                   </button>
                 </div>
               ) : (
-                <LawSelector
-                  onLawSelect={handleLawSelect}
-                  selectedLaw={selectedLaw}
-                />
+                <div className="p-8">
+                  <LawSelector
+                    onLawSelect={handleLawSelect}
+                    selectedLaw={selectedLaw}
+                  />
+                </div>
               )}
             </div>
           </div>
@@ -205,14 +238,21 @@ export default function LawsPage() {
               {/* Layout para telas grandes - 3 colunas lado a lado */}
             {/* Lei Hierarchy - Left Side - 38% */}
             <div className="w-[38%] flex-shrink-0">
-              <div className="bg-white rounded-lg shadow h-full">
-                <div className="px-6 py-4 border-b border-gray-200">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    Estrutura da Lei
-                  </h3>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Clique em qualquer elemento para selecioná-lo
-                  </p>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <BookOpen className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Estrutura da Lei
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        Clique em qualquer elemento para selecioná-lo
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="p-6 h-[calc(100%-4rem)] overflow-y-auto">
@@ -234,12 +274,22 @@ export default function LawsPage() {
 
             {/* Selected Element Details - Center - 31% */}
             <div className="w-[31%] flex-shrink-0">
-              <div className="bg-white rounded-lg shadow h-full flex flex-col">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
                 {/* Header fixo */}
-                <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    Elemento Selecionado
-                  </h3>
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <MessageSquare className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Elemento Selecionado
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        {selectedLawElement ? 'Visualizando conteúdo completo' : 'Nenhum elemento selecionado'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {selectedLawElement ? (
@@ -293,18 +343,36 @@ export default function LawsPage() {
 
             {/* AI Tools - Right Side - 29% */}
             <div className="w-[29%] flex-shrink-0">
-              <div className="bg-white rounded-lg shadow h-full flex flex-col">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
                 {/* Header fixo */}
-                <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    Ferramentas de IA
-                  </h3>
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <Bot className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Ferramentas de IA
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        {selectedLawElement ? 'Interaja com o conteúdo' : 'Selecione um elemento'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {selectedLawElement ? (
                   <AITools
                     lawContent={getFullHierarchicalContent(selectedLawElement)}
                     lawTitle={selectedLawElement.title}
+                    selectedElement={{
+                      id: selectedLawElement.id,
+                      law_id: selectedLawElement.law_id,
+                      element_type: selectedLawElement.element_type,
+                      element_number: selectedLawElement.element_number || '',
+                      title: selectedLawElement.title,
+                      content: selectedLawElement.content
+                    }}
                   />
                 ) : (
                   /* Estado vazio */
@@ -323,14 +391,21 @@ export default function LawsPage() {
             {/* Layout para telas médias e pequenas - Grid responsivo */}
             {/* Lei Hierarchy */}
             <div className="h-1/2">
-              <div className="bg-white rounded-lg shadow h-full">
-                <div className="px-6 py-4 border-b border-gray-200">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    Estrutura da Lei
-                  </h3>
-                  <p className="text-sm text-gray-600 mt-1">
-                    Clique em qualquer elemento para selecioná-lo
-                  </p>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
+                <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-1.5 bg-white rounded-lg border border-gray-200">
+                      <BookOpen className="h-4 w-4 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900 tracking-tight">
+                        Estrutura da Lei
+                      </h3>
+                      <p className="text-xs text-gray-600 mt-0.5 font-medium">
+                        Clique em qualquer elemento
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="p-6 h-[calc(100%-4rem)] overflow-y-auto">
@@ -354,11 +429,18 @@ export default function LawsPage() {
             <div className="h-1/2 flex gap-6">
               {/* Selected Element Details */}
               <div className="flex-1">
-                <div className="bg-white rounded-lg shadow h-full flex flex-col">
-                  <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
-                    <h3 className="text-lg font-medium text-gray-900">
-                      Elemento Selecionado
-                    </h3>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                  <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-1.5 bg-white rounded-lg border border-gray-200">
+                        <MessageSquare className="h-4 w-4 text-gray-700" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900 tracking-tight">
+                          Elemento Selecionado
+                        </h3>
+                      </div>
+                    </div>
                   </div>
 
                   {selectedLawElement ? (
@@ -403,11 +485,18 @@ export default function LawsPage() {
 
               {/* AI Tools */}
               <div className="flex-1">
-                <div className="bg-white rounded-lg shadow h-full flex flex-col">
-                  <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
-                    <h3 className="text-lg font-medium text-gray-900">
-                      Ferramentas de IA
-                    </h3>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                  <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-1.5 bg-white rounded-lg border border-gray-200">
+                        <Bot className="h-4 w-4 text-gray-700" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900 tracking-tight">
+                          Ferramentas de IA
+                        </h3>
+                      </div>
+                    </div>
                   </div>
 
                   {selectedLawElement ? (

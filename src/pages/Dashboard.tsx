@@ -1,11 +1,13 @@
 import { useAuth } from '../contexts/AuthContext'
 import { useApp } from '../contexts/AppContext'
+import { useNavigate } from 'react-router-dom'
 import { Book, FileText, HelpCircle, Plus, Search, LogOut } from 'lucide-react'
 import TestConnection from '../components/TestConnection'
 
 export default function Dashboard() {
   const { user, signOut } = useAuth()
-  const { currentTab, setCurrentTab, setCurrentView } = useApp()
+  const { currentTab, setCurrentTab } = useApp()
+  const navigate = useNavigate()
 
   const handleSignOut = async () => {
     try {
@@ -77,7 +79,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <div
                 className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => setCurrentView('contests')}
+                onClick={() => navigate('/contests')}
               >
                 <div className="p-6">
                   <div className="flex items-center">
@@ -98,7 +100,7 @@ export default function Dashboard() {
 
               <div
                 className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => setCurrentView('contests')}
+                onClick={() => navigate('/contests')}
               >
                 <div className="p-6">
                   <div className="flex items-center">
@@ -119,7 +121,7 @@ export default function Dashboard() {
 
               <div
                 className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => setCurrentView('laws')}
+                onClick={() => navigate('/laws')}
               >
                 <div className="p-6">
                   <div className="flex items-center">
@@ -140,7 +142,7 @@ export default function Dashboard() {
 
               <div
                 className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer md:col-span-2 lg:col-span-1"
-                onClick={() => setCurrentView('questions')}
+                onClick={() => navigate('/questions')}
               >
                 <div className="p-6">
                   <div className="flex items-center">

@@ -151,6 +151,85 @@ Formate as questões de forma clara e inclua as respostas corretas com explicaç
     return await this.chat([systemMessage, userMessage]);
   }
 
+  // Método para estruturar uma questão individual em JSON
+  async structureSingleQuestion(questionText: string, lawTitle: string): Promise<any> {
+    const systemMessage: DeepSeekMessage = {
+      role: 'system',
+      content: `Você é um especialista em processamento de questões para concursos públicos.
+
+      IMPORTANTE: Sua resposta DEVE ser exclusivamente um objeto JSON válido, sem texto adicional antes ou depois.
+      Não inclua explicações, comentários ou formatação markdown - apenas o JSON puro.`
+    };
+
+    const userMessage: DeepSeekMessage = {
+      role: 'user',
+      content: `Converta a seguinte questão em formato JSON estruturado:
+
+${questionText}
+
+Contexto: ${lawTitle}
+
+Retorne EXCLUSIVAMENTE um objeto JSON com esta estrutura:
+
+Para questões de múltipla escolha:
+{
+  "type": "multiple_choice",
+  "question_text": "Texto da questão",
+  "options": {
+    "a": "Opção A",
+    "b": "Opção B",
+    "c": "Opção C",
+    "d": "Opção D",
+    "e": "Opção E"
+  },
+  "correct_answer": "c",
+  "explanation": "Explicação da resposta correta"
+}
+
+Para questões verdadeiro/falso:
+{
+  "type": "true_false",
+  "question_text": "Texto da afirmação para julgar",
+  "correct_answer": "true",
+  "explanation": "Justificativa da resposta"
+}
+
+Para questões dissertativas:
+{
+  "type": "essay",
+  "question_text": "Texto da questão dissertativa",
+  "correct_answer": "Resposta esperada detalhada",
+  "explanation": "Questão dissertativa - resposta livre"
+}
+
+RESPONDA APENAS COM O JSON - SEM TEXTO ADICIONAL.`
+    };
+
+    const response = await this.chat([systemMessage, userMessage]);
+
+    try {
+      // Tentar limpar a resposta caso venha com formatação markdown
+      let cleanResponse = response.trim();
+      if (cleanResponse.startsWith('```json')) {
+        cleanResponse = cleanResponse.replace(/```json\s*/, '').replace(/\s*```$/, '');
+      } else if (cleanResponse.startsWith('```')) {
+        cleanResponse = cleanResponse.replace(/```\s*/, '').replace(/\s*```$/, '');
+      }
+
+      const question = JSON.parse(cleanResponse);
+
+      if (!question.type || !question.question_text) {
+        throw new Error('Objeto JSON inválido - faltam campos obrigatórios');
+      }
+
+      return question;
+    } catch (error) {
+      console.error('Erro ao processar JSON do DeepSeek:', error);
+      console.error('Resposta recebida:', response);
+      throw new Error('Erro ao processar questão estruturada do DeepSeek');
+    }
+  }
+
   // Método para questão personalizada
   async askCustomQuestion(lawContent: string, lawTitle: string, question: string): Promise<string> {
     const systemMessage: DeepSeekMessage = {

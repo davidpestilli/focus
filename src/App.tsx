@@ -1,29 +1,27 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { AppProvider } from './contexts/AppContext'
 import Dashboard from './pages/Dashboard'
 import AuthPage from './pages/AuthPage'
 import LawsPage from './pages/LawsPage'
 import ContestsPage from './pages/ContestsPage'
+import QuestionsPage from './pages/QuestionsPage'
+import StudySessionPage from './pages/StudySessionPage'
 import { useAuth } from './contexts/AuthContext'
-import { useApp } from './contexts/AppContext'
 
-function AppRouter() {
-  const { currentView } = useApp()
-
-  switch (currentView) {
-    case 'laws':
-      return <LawsPage />
-    case 'contests':
-      return <ContestsPage />
-    case 'questions':
-      // TODO: Implement QuestionsPage
-      return <Dashboard />
-    case 'study':
-      // TODO: Implement StudyPage
-      return <Dashboard />
-    default:
-      return <Dashboard />
-  }
+function ProtectedRoutes() {
+  return (
+    <AppProvider>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/laws" element={<LawsPage />} />
+        <Route path="/contests" element={<ContestsPage />} />
+        <Route path="/questions" element={<QuestionsPage />} />
+        <Route path="/study-session" element={<StudySessionPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppProvider>
+  )
 }
 
 function AppContent() {
@@ -41,18 +39,16 @@ function AppContent() {
     return <AuthPage />
   }
 
-  return (
-    <AppProvider>
-      <AppRouter />
-    </AppProvider>
-  )
+  return <ProtectedRoutes />
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </BrowserRouter>
   )
 }
 
