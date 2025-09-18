@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { ArrowRight, Copy, Save, Check, BookOpen, ArrowLeft } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { ArrowRight, Copy, Save, Check, BookOpen, ArrowLeft, Trash2, Loader2 } from 'lucide-react'
 import { useLaws } from '../hooks/useLaws'
 import { useLawElements } from '../hooks/useLawElements'
 import LawSelector from './LawSelector'
@@ -10,26 +10,46 @@ interface ContestLawSelectorProps {
   onSave: (contestLaw: {
     law: Law
     selectedElements: LawElement[]
+    elementsToRemove?: string[]
   }) => void
   onCancel: () => void
+  editingContestLaw?: {
+    law: Law
+    selectedElements: LawElement[]
+  } | null
+  isSaving?: boolean
 }
 
-export default function ContestLawSelector({ onSave, onCancel }: ContestLawSelectorProps) {
+export default function ContestLawSelector({ onSave, onCancel, editingContestLaw, isSaving = false }: ContestLawSelectorProps) {
   const [selectedLaw, setSelectedLaw] = useState<Law | null>(null)
   const [selectedElements, setSelectedElements] = useState<Set<string>>(new Set())
   const [copiedElements, setCopiedElements] = useState<LawElement[]>([])
   const [showCopiedStructure, setShowCopiedStructure] = useState(false)
+  const [selectedCopiedElement, setSelectedCopiedElement] = useState<string | null>(null)
+  const [elementsToRemove, setElementsToRemove] = useState<Set<string>>(new Set())
 
   const { laws, loading: lawsLoading } = useLaws()
   const { elements, loading: elementsLoading, buildHierarchy } = useLawElements(selectedLaw?.id)
 
   const hierarchy = buildHierarchy()
 
+  // Inicializar com dados de edição se fornecidos
+  useEffect(() => {
+    if (editingContestLaw) {
+      setSelectedLaw(editingContestLaw.law)
+      setCopiedElements(editingContestLaw.selectedElements)
+      setShowCopiedStructure(true)
+      setSelectedElements(new Set())
+    }
+  }, [editingContestLaw])
+
   const handleLawSelect = (law: Law) => {
     setSelectedLaw(law)
     setSelectedElements(new Set())
     setCopiedElements([])
     setShowCopiedStructure(false)
+    setSelectedCopiedElement(null)
+    setElementsToRemove(new Set())
   }
 
   const handleSelectionChange = (newSelectedElements: Set<string>) => {
@@ -71,11 +91,48 @@ export default function ContestLawSelector({ onSave, onCancel }: ContestLawSelec
     setShowCopiedStructure(true)
   }
 
+  // Função para encontrar todos os descendentes de um elemento recursivamente
+  const findAllDescendants = (elementId: string, allElements: LawElement[]): string[] => {
+    const descendants: string[] = []
+
+    // Função recursiva para encontrar descendentes
+    const findDescendantsRecursive = (parentId: string) => {
+      allElements.forEach(element => {
+        if (element.parent_id === parentId) {
+          descendants.push(element.id)
+          // Recursivamente encontrar descendentes deste elemento
+          findDescendantsRecursive(element.id)
+        }
+      })
+    }
+
+    findDescendantsRecursive(elementId)
+    return descendants
+  }
+
+  const handleRemoveCopiedElement = () => {
+    if (selectedCopiedElement) {
+      // Encontrar todos os descendentes do elemento selecionado
+      const descendants = findAllDescendants(selectedCopiedElement, copiedElements)
+
+      // Adicionar o elemento selecionado e todos os seus descendentes à lista de remoção
+      const elementsToRemoveIds = [selectedCopiedElement, ...descendants]
+      setElementsToRemove(prev => new Set([...prev, ...elementsToRemoveIds]))
+
+      // Remover o elemento selecionado e todos os seus descendentes da lista de elementos copiados
+      setCopiedElements(prev => prev.filter(el => !elementsToRemoveIds.includes(el.id)))
+
+      // Limpar seleção
+      setSelectedCopiedElement(null)
+    }
+  }
+
   const handleSave = () => {
-    if (selectedLaw && copiedElements.length > 0) {
+    if (selectedLaw && (copiedElements.length > 0 || elementsToRemove.size > 0)) {
       onSave({
         law: selectedLaw,
-        selectedElements: copiedElements
+        selectedElements: copiedElements,
+        elementsToRemove: Array.from(elementsToRemove)
       })
     }
   }
@@ -118,62 +175,50 @@ export default function ContestLawSelector({ onSave, onCancel }: ContestLawSelec
   }
 
   return (
-    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-8 py-6 flex-shrink-0 shadow-sm">
-        <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <div className="flex items-center space-x-6">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
-                Adicionar Lei ao Concurso
-              </h1>
-              <p className="text-base text-gray-600 mt-2 font-medium">
-                Selecione uma lei e os elementos que deseja incluir no concurso
-              </p>
-            </div>
-            <div className="border-l border-gray-300 pl-6">
-              <div className="flex items-center space-x-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
-                    Leis Disponíveis
-                  </h2>
-                </div>
-                <div className="text-right">
-                  <div className="text-3xl font-bold text-gray-900">
-                    {laws.length}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            {showCopiedStructure && (
-              <button
-                onClick={handleSave}
-                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-              >
-                <Save className="h-4 w-4 mr-2" />
-                Salvar Lei no Concurso
-              </button>
-            )}
+    <div className={`${selectedLaw ? 'h-screen' : 'min-h-screen'} bg-gray-50 flex flex-col ${selectedLaw ? 'overflow-hidden' : ''}`}>
+      {/* Save Button Header */}
+      {showCopiedStructure && (
+        <div className="bg-white border-b border-gray-200 px-8 py-4 flex-shrink-0 shadow-sm">
+          <div className="flex items-center justify-end max-w-7xl mx-auto">
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className={`flex items-center px-4 py-2 rounded-md transition-colors ${
+                isSaving
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700'
+              } text-white`}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Salvando...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Salvar Lei no Concurso
+                </>
+              )}
+            </button>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content */}
-      <main className="flex-1 w-full p-6 overflow-hidden">
+      <main className={`flex-1 w-full p-6 ${selectedLaw ? 'overflow-hidden' : ''}`}>
         {!selectedLaw ? (
           // Seleção de Lei
-          <div className="h-full bg-white rounded-xl shadow-sm border border-gray-100">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100">
             {lawsLoading ? (
-              <div className="flex items-center justify-center h-full">
+              <div className="flex items-center justify-center">
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-600 mx-auto"></div>
                   <p className="mt-4 text-base text-gray-600 font-medium">Carregando leis...</p>
                 </div>
               </div>
             ) : (
-              <div className="p-8 h-full overflow-y-auto">
+              <div className="p-8">
                 <LawSelector
                   onLawSelect={handleLawSelect}
                   selectedLaw={selectedLaw}
@@ -183,7 +228,7 @@ export default function ContestLawSelector({ onSave, onCancel }: ContestLawSelec
           </div>
         ) : (
           // Seleção de Elementos da Lei
-          <div className="flex gap-6 h-full">
+          <div className="flex gap-6 h-full relative">
             {/* Estrutura da Lei Geral - Left Side */}
             <div className="w-1/2 flex-shrink-0">
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
@@ -225,23 +270,35 @@ export default function ContestLawSelector({ onSave, onCancel }: ContestLawSelec
                     />
                   )}
                 </div>
-
-                {/* Copy Button */}
-                <div className="px-6 py-4 border-t border-gray-100 bg-gray-50">
-                  <button
-                    onClick={handleCopy}
-                    disabled={selectedElements.size === 0}
-                    className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                  >
-                    <Copy className="h-5 w-5 mr-2" />
-                    Copiar Elementos Selecionados ({selectedElements.size})
-                  </button>
-                </div>
               </div>
             </div>
 
-            {/* Arrow and Structure do Concurso - Right Side */}
+            {/* Action Buttons - Center */}
+            <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 flex flex-col space-y-2">
+              <button
+                onClick={handleCopy}
+                disabled={selectedElements.size === 0}
+                className="flex items-center justify-center px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed shadow-lg"
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Incluir ({selectedElements.size})
+              </button>
+
+              {showCopiedStructure && (
+                <button
+                  onClick={handleRemoveCopiedElement}
+                  disabled={!selectedCopiedElement}
+                  className="flex items-center justify-center px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed shadow-lg"
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Excluir
+                </button>
+              )}
+            </div>
+
+            {/* Structure do Concurso - Right Side */}
             <div className="w-1/2 flex-shrink-0 flex flex-col">
+
               {/* Arrow */}
               {!showCopiedStructure && (
                 <div className="flex-1 flex items-center justify-center">
@@ -275,9 +332,19 @@ export default function ContestLawSelector({ onSave, onCancel }: ContestLawSelec
                   <div className="p-6 h-[calc(100%-6rem)] overflow-y-auto">
                     <div className="space-y-1">
                       {buildCopiedHierarchy().map((element) => (
-                        <div key={element.id} className="p-3 bg-green-50 rounded-lg border border-green-200">
+                        <div
+                          key={element.id}
+                          className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                            selectedCopiedElement === element.id
+                              ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-500 ring-opacity-50'
+                              : 'bg-green-50 border-green-200 hover:bg-green-100'
+                          }`}
+                          onClick={() => setSelectedCopiedElement(element.id)}
+                        >
                           <div className="flex items-center space-x-3">
-                            <BookOpen className="h-4 w-4 text-green-600" />
+                            <BookOpen className={`h-4 w-4 ${
+                              selectedCopiedElement === element.id ? 'text-blue-600' : 'text-green-600'
+                            }`} />
                             <div>
                               <div className="text-sm font-medium text-gray-900">
                                 {element.title}

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, Trophy, Plus, Calendar, Users, BookOpen, Settings, MessageSquare, Bot } from 'lucide-react'
+import { ArrowLeft, Trophy, Plus, Calendar, Users, BookOpen, Settings, MessageSquare, Bot, Edit, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useContests } from '../hooks/useContests'
 import { useLawElements } from '../hooks/useLawElements'
 import { useContestLaws } from '../hooks/useContestLaws'
+import { useLaws } from '../hooks/useLaws'
 import ContestLawSelector from '../components/ContestLawSelector'
 import LawHierarchy from '../components/LawHierarchy'
 import { AITools } from '../components/AITools'
@@ -15,15 +16,19 @@ type ViewMode = 'list' | 'form' | 'contest-detail' | 'add-law' | 'study-law'
 export default function ContestsPage() {
   const navigate = useNavigate()
   const { setSelectedContest } = useApp()
-  const { contests, loading, createContest } = useContests()
+  const { contests, loading, createContest, updateContest, deleteContest } = useContests()
+  const { laws } = useLaws()
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [selectedContest, setSelectedContestLocal] = useState<Contest | null>(null)
+  const [editingContest, setEditingContest] = useState<Contest | null>(null)
+  const [editingContestLaw, setEditingContestLaw] = useState<{law: Law, selectedElements: LawElement[]} | null>(null)
+  const [isSavingContestLaw, setIsSavingContestLaw] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     active: true
   })
-  const { contestLaws: contestLawsFromDB, loading: contestLawsLoading, addLawElementsToContest, getContestLawsByLaw } = useContestLaws(selectedContest?.id)
+  const { contestLaws: contestLawsFromDB, loading: contestLawsLoading, addLawElementsToContest, getContestLawsByLaw, removeLawElementFromContest } = useContestLaws(selectedContest?.id)
   const [contestLaws, setContestLaws] = useState<Array<{law: Law, selectedElements: LawElement[]}>>([])  // Local state for display
   const [studyingLaw, setStudyingLaw] = useState<{law: Law, selectedElements: LawElement[]} | null>(null)
   const [selectedLawElement, setSelectedLawElement] = useState<LawElement | null>(null)
@@ -42,11 +47,37 @@ export default function ContestsPage() {
   const handleCreateContest = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      await createContest(formData)
+      if (editingContest) {
+        await updateContest(editingContest.id, formData)
+        setEditingContest(null)
+      } else {
+        await createContest(formData)
+      }
       setViewMode('list')
       setFormData({ name: '', description: '', active: true })
     } catch (error) {
-      console.error('Erro ao criar concurso:', error)
+      console.error('Erro ao salvar concurso:', error)
+    }
+  }
+
+  const handleEditContest = (contest: Contest) => {
+    setEditingContest(contest)
+    setFormData({
+      name: contest.name,
+      description: contest.description || '',
+      active: contest.active
+    })
+    setViewMode('form')
+  }
+
+  const handleDeleteContest = async (contestId: string) => {
+    if (window.confirm('Tem certeza que deseja excluir este concurso? Esta ação não pode ser desfeita.')) {
+      try {
+        await deleteContest(contestId)
+      } catch (error) {
+        console.error('Erro ao excluir concurso:', error)
+        alert('Erro ao excluir concurso. Tente novamente.')
+      }
     }
   }
 
@@ -64,27 +95,69 @@ export default function ContestsPage() {
     setViewMode('add-law')
   }
 
-  const handleSaveContestLaw = async (contestLaw: {law: Law, selectedElements: LawElement[]}) => {
+  const handleSaveContestLaw = async (contestLaw: {law: Law, selectedElements: LawElement[], elementsToRemove?: string[]}) => {
     if (!selectedContest) return
 
+    setIsSavingContestLaw(true)
     try {
+      // Remover elementos se há elementos para remover
+      if (contestLaw.elementsToRemove && contestLaw.elementsToRemove.length > 0) {
+        // Encontrar os IDs dos contest_law_elements a serem removidos
+        const elementsToRemoveFromDB = contestLawsFromDB.filter(
+          contestLawEl => contestLaw.elementsToRemove!.includes(contestLawEl.law_element?.id || '')
+        )
+
+        // Remover cada elemento do banco
+        for (const element of elementsToRemoveFromDB) {
+          await removeLawElementFromContest(element.id)
+        }
+      }
+
       // Extrair IDs dos elementos selecionados
       const elementIds = contestLaw.selectedElements.map(element => element.id)
 
-      // Salvar no banco de dados
-      await addLawElementsToContest(selectedContest.id, elementIds)
+      // Se há novos elementos, adicionar ao banco
+      if (elementIds.length > 0) {
+        await addLawElementsToContest(selectedContest.id, elementIds)
+      }
 
-      // Atualizar estado local para exibição imediata
-      setContestLaws(prev => [...prev, contestLaw])
+      // Atualizar estado local
+      if (editingContestLaw) {
+        // Se não há mais elementos, remover a lei completamente da lista
+        if (contestLaw.selectedElements.length === 0) {
+          setContestLaws(prev => prev.filter(existingLaw => existingLaw.law.id !== contestLaw.law.id))
+        } else {
+          // Atualizar lei existente
+          setContestLaws(prev => prev.map(existingLaw =>
+            existingLaw.law.id === contestLaw.law.id ? contestLaw : existingLaw
+          ))
+        }
+        setEditingContestLaw(null)
+      } else {
+        // Adicionar nova lei (somente se há elementos)
+        if (contestLaw.selectedElements.length > 0) {
+          setContestLaws(prev => [...prev, contestLaw])
+        }
+      }
+
       setViewMode('contest-detail')
     } catch (error) {
       console.error('Erro ao salvar lei no concurso:', error)
       alert('Erro ao salvar lei no concurso. Tente novamente.')
+    } finally {
+      setIsSavingContestLaw(false)
     }
+  }
+
+  const handleEditContestLaw = (contestLaw: {law: Law, selectedElements: LawElement[]}) => {
+    setEditingContestLaw(contestLaw)
+    setViewMode('add-law')
   }
 
   const handleCancelAddLaw = () => {
     setViewMode('contest-detail')
+    setEditingContestLaw(null)
+    setIsSavingContestLaw(false)
   }
 
   const handleBackToList = () => {
@@ -105,6 +178,30 @@ export default function ContestsPage() {
     setViewMode('contest-detail')
     setStudyingLaw(null)
     setSelectedLawElement(null)
+  }
+
+  const handleRemoveLawFromContest = async (lawId: string) => {
+    if (!selectedContest) return
+
+    if (window.confirm('Tem certeza que deseja remover esta lei do concurso? Esta ação não pode ser desfeita.')) {
+      try {
+        // Encontrar todos os elementos da lei no concurso
+        const elementsToRemove = contestLawsFromDB.filter(
+          contestLaw => contestLaw.law_element?.law_id === lawId
+        )
+
+        // Remover todos os elementos da lei
+        for (const element of elementsToRemove) {
+          await removeLawElementFromContest(element.id)
+        }
+
+        // Atualizar estado local
+        setContestLaws(prev => prev.filter(contestLaw => contestLaw.law.id !== lawId))
+      } catch (error) {
+        console.error('Erro ao remover lei do concurso:', error)
+        alert('Erro ao remover lei do concurso. Tente novamente.')
+      }
+    }
   }
 
   const handleElementSelect = (element: LawElement) => {
@@ -248,7 +345,7 @@ export default function ContestsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={`${viewMode === 'add-law' ? 'h-screen overflow-hidden' : 'min-h-screen'} bg-gray-50`}>
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-8 py-6 flex-shrink-0 shadow-sm">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
@@ -284,6 +381,8 @@ export default function ContestsPage() {
                   ? selectedContest?.name
                   : viewMode === 'study-law'
                   ? studyingLaw?.law.name
+                  : viewMode === 'add-law'
+                  ? 'Adicionar Lei ao Concurso'
                   : 'Concursos'
                 }
               </h1>
@@ -292,10 +391,28 @@ export default function ContestsPage() {
                   ? 'Configure as leis e elementos do concurso'
                   : viewMode === 'study-law'
                   ? 'Explore a estrutura e conteúdo da lei selecionada'
+                  : viewMode === 'add-law'
+                  ? 'Selecione uma lei e os elementos que deseja incluir no concurso'
                   : 'Gerencie seus concursos públicos'
                 }
               </p>
             </div>
+            {viewMode === 'add-law' && (
+              <div className="border-l border-gray-300 pl-6">
+                <div className="flex items-center space-x-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
+                      Leis Disponíveis
+                    </h2>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-3xl font-bold text-gray-900">
+                      {laws.length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           {viewMode === 'list' && (
             <button
@@ -310,17 +427,20 @@ export default function ContestsPage() {
       </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-        {viewMode === 'add-law' ? (
-          <ContestLawSelector
-            onSave={handleSaveContestLaw}
-            onCancel={handleCancelAddLaw}
-          />
-        ) : viewMode === 'form' ? (
+      {viewMode === 'add-law' ? (
+        <ContestLawSelector
+          onSave={handleSaveContestLaw}
+          onCancel={handleCancelAddLaw}
+          editingContestLaw={editingContestLaw}
+          isSaving={isSavingContestLaw}
+        />
+      ) : (
+        <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+        {viewMode === 'form' ? (
           <div className="max-w-2xl mx-auto">
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-medium text-gray-900 mb-4">
-                Criar Novo Concurso
+                {editingContest ? 'Editar Concurso' : 'Criar Novo Concurso'}
               </h2>
 
               <form onSubmit={handleCreateContest} className="space-y-4">
@@ -369,7 +489,11 @@ export default function ContestsPage() {
                 <div className="flex justify-end space-x-3">
                   <button
                     type="button"
-                    onClick={() => setViewMode('list')}
+                    onClick={() => {
+                      setViewMode('list')
+                      setEditingContest(null)
+                      setFormData({ name: '', description: '', active: true })
+                    }}
                     className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
                   >
                     Cancelar
@@ -378,7 +502,7 @@ export default function ContestsPage() {
                     type="submit"
                     className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
                   >
-                    Criar Concurso
+                    {editingContest ? 'Salvar Alterações' : 'Criar Concurso'}
                   </button>
                 </div>
               </form>
@@ -456,9 +580,26 @@ export default function ContestsPage() {
                             <BookOpen className="h-5 w-5 text-blue-600" />
                             <h4 className="font-medium text-gray-900">{contestLaw.law.name}</h4>
                           </div>
-                          <button className="text-gray-400 hover:text-gray-600">
-                            <Settings className="h-4 w-4" />
-                          </button>
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleEditContestLaw(contestLaw)
+                              }}
+                              className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRemoveLawFromContest(contestLaw.law.id)
+                              }}
+                              className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                         <div className="text-sm text-gray-600">
                           <p>{contestLaw.selectedElements.length} elementos selecionados</p>
@@ -658,34 +799,58 @@ export default function ContestsPage() {
                 {contests.map((contest) => (
                   <div
                     key={contest.id}
-                    className="bg-white rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer"
-                    onClick={() => handleContestSelect(contest)}
+                    className="bg-white rounded-lg shadow hover:shadow-md transition-shadow"
                   >
                     <div className="p-6">
                       <div className="flex items-center justify-between mb-4">
                         <Trophy className="h-8 w-8 text-indigo-600" />
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          contest.active
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {contest.active ? 'Ativo' : 'Inativo'}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleEditContest(contest)
+                            }}
+                            className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteContest(contest.id)
+                            }}
+                            className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            contest.active
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {contest.active ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
                       </div>
 
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">
-                        {contest.name}
-                      </h3>
+                      <div
+                        className="cursor-pointer"
+                        onClick={() => handleContestSelect(contest)}
+                      >
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">
+                          {contest.name}
+                        </h3>
 
-                      {contest.description && (
-                        <p className="text-sm text-gray-600 mb-4 line-clamp-3">
-                          {contest.description}
-                        </p>
-                      )}
+                        {contest.description && (
+                          <p className="text-sm text-gray-600 mb-4 line-clamp-3">
+                            {contest.description}
+                          </p>
+                        )}
 
-                      <div className="flex items-center text-xs text-gray-500">
-                        <Calendar className="h-4 w-4 mr-1" />
-                        Criado em {new Date(contest.created_at).toLocaleDateString('pt-BR')}
+                        <div className="flex items-center text-xs text-gray-500">
+                          <Calendar className="h-4 w-4 mr-1" />
+                          Criado em {new Date(contest.created_at).toLocaleDateString('pt-BR')}
+                        </div>
                       </div>
                     </div>
 
@@ -713,6 +878,7 @@ export default function ContestsPage() {
           </div>
         )}
       </main>
+      )}
     </div>
   )
 }
