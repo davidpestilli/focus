@@ -345,7 +345,7 @@ export default function ContestsPage() {
   }
 
   return (
-    <div className={`${viewMode === 'add-law' ? 'h-screen overflow-hidden' : 'min-h-screen'} bg-gray-50`}>
+    <div className={`${viewMode === 'add-law' || viewMode === 'study-law' ? 'h-screen overflow-hidden' : 'min-h-screen'} bg-gray-50 ${viewMode === 'study-law' ? 'flex flex-col' : ''}`}>
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-8 py-6 flex-shrink-0 shadow-sm">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
@@ -434,6 +434,156 @@ export default function ContestsPage() {
           editingContestLaw={editingContestLaw}
           isSaving={isSavingContestLaw}
         />
+      ) : viewMode === 'study-law' && studyingLaw ? (
+        /* Study Law View - 3 Containers */
+        <main className="flex-1 w-full p-6 overflow-hidden">
+          <div className="flex gap-6 h-full">
+            {/* Law Hierarchy - Left Side - 38% */}
+            <div className="w-[38%] flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <BookOpen className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Estrutura da Lei
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        Elementos selecionados para o concurso
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 h-[calc(100%-4rem)] overflow-y-auto">
+                  {studyElementsLoading ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+                      <p className="mt-2 text-sm text-gray-600">Carregando estrutura...</p>
+                    </div>
+                  ) : (
+                    <LawHierarchy
+                      elements={getFilteredHierarchy()}
+                      onElementSelect={handleElementSelect}
+                      selectedElement={selectedLawElement}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Selected Element Details - Center - 31% */}
+            <div className="w-[31%] flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                {/* Header fixo */}
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <MessageSquare className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Elemento Selecionado
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        {selectedLawElement ? 'Visualizando conteúdo completo' : 'Nenhum elemento selecionado'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedLawElement ? (
+                  <>
+                    {/* Conteúdo com scroll */}
+                    <div className="flex-1 overflow-y-auto p-6">
+                      <div>
+                        <h5 className="text-lg font-semibold text-gray-900 mt-1">
+                          {selectedLawElement.title}
+                        </h5>
+
+                        {(() => {
+                          const fullContent = getFullHierarchicalContent(selectedLawElement)
+                          const { content, isTruncated, totalLength } = getTruncatedContent(fullContent, 2000)
+
+                          return (
+                            <div className="prose prose-sm max-w-none">
+                              <p className="text-gray-700 whitespace-pre-wrap text-sm">
+                                {content}
+                              </p>
+                              {isTruncated && (
+                                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
+                                  <p className="text-xs text-blue-700">
+                                    <strong>Conteúdo truncado para exibição</strong><br/>
+                                    Total: {totalLength?.toLocaleString()} caracteres. O conteúdo completo será usado para contextualizar perguntas à IA.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* Estado vazio */
+                  <div className="flex-1 flex items-center justify-center p-6">
+                    <div className="text-center text-gray-500">
+                      <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <p>Selecione um elemento da lei para ver detalhes</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* AI Tools - Right Side - 29% */}
+            <div className="w-[29%] flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                {/* Header fixo */}
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <Bot className="h-5 w-5 text-gray-700" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Ferramentas de IA
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1 font-medium">
+                        {selectedLawElement ? 'Interaja com o conteúdo' : 'Selecione um elemento'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {selectedLawElement ? (
+                  <AITools
+                    lawContent={getFullHierarchicalContent(selectedLawElement)}
+                    lawTitle={selectedLawElement.title}
+                    selectedElement={{
+                      id: selectedLawElement.id,
+                      law_id: selectedLawElement.law_id,
+                      element_type: selectedLawElement.element_type,
+                      element_number: selectedLawElement.element_number || '',
+                      title: selectedLawElement.title,
+                      content: selectedLawElement.content
+                    }}
+                  />
+                ) : (
+                  /* Estado vazio */
+                  <div className="flex-1 flex items-center justify-center p-6">
+                    <div className="text-center text-gray-500">
+                      <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <p className="text-sm">Selecione um elemento para usar as ferramentas de IA</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </main>
       ) : (
         <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         {viewMode === 'form' ? (
@@ -617,154 +767,6 @@ export default function ContestsPage() {
                         </div>
                       </div>
                     ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : viewMode === 'study-law' && studyingLaw ? (
-          /* Study Law View - 3 Containers */
-          <div className="h-[calc(100vh-8rem)] flex gap-6">
-            {/* Law Hierarchy - Left Side - 38% */}
-            <div className="w-[38%] flex-shrink-0">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
-                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-white rounded-lg border border-gray-200">
-                      <BookOpen className="h-5 w-5 text-gray-700" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
-                        Estrutura da Lei
-                      </h3>
-                      <p className="text-sm text-gray-600 mt-1 font-medium">
-                        Elementos selecionados para o concurso
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 h-[calc(100%-4rem)] overflow-y-auto">
-                  {studyElementsLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
-                      <p className="mt-2 text-sm text-gray-600">Carregando estrutura...</p>
-                    </div>
-                  ) : (
-                    <LawHierarchy
-                      elements={getFilteredHierarchy()}
-                      onElementSelect={handleElementSelect}
-                      selectedElement={selectedLawElement}
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Selected Element Details - Center - 31% */}
-            <div className="w-[31%] flex-shrink-0">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
-                {/* Header fixo */}
-                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-white rounded-lg border border-gray-200">
-                      <MessageSquare className="h-5 w-5 text-gray-700" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
-                        Elemento Selecionado
-                      </h3>
-                      <p className="text-sm text-gray-600 mt-1 font-medium">
-                        {selectedLawElement ? 'Visualizando conteúdo completo' : 'Nenhum elemento selecionado'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {selectedLawElement ? (
-                  <>
-                    {/* Conteúdo com scroll */}
-                    <div className="flex-1 overflow-y-auto p-6">
-                      <div>
-                        <h5 className="text-lg font-semibold text-gray-900 mt-1">
-                          {selectedLawElement.title}
-                        </h5>
-
-                        {(() => {
-                          const fullContent = getFullHierarchicalContent(selectedLawElement)
-                          const { content, isTruncated, totalLength } = getTruncatedContent(fullContent, 2000)
-
-                          return (
-                            <div className="prose prose-sm max-w-none">
-                              <p className="text-gray-700 whitespace-pre-wrap text-sm">
-                                {content}
-                              </p>
-                              {isTruncated && (
-                                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
-                                  <p className="text-xs text-blue-700">
-                                    <strong>Conteúdo truncado para exibição</strong><br/>
-                                    Total: {totalLength?.toLocaleString()} caracteres. O conteúdo completo será usado para contextualizar perguntas à IA.
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })()}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  /* Estado vazio */
-                  <div className="flex-1 flex items-center justify-center p-6">
-                    <div className="text-center text-gray-500">
-                      <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                      <p>Selecione um elemento da lei para ver detalhes</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* AI Tools - Right Side - 29% */}
-            <div className="w-[29%] flex-shrink-0">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
-                {/* Header fixo */}
-                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-white rounded-lg border border-gray-200">
-                      <Bot className="h-5 w-5 text-gray-700" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
-                        Ferramentas de IA
-                      </h3>
-                      <p className="text-sm text-gray-600 mt-1 font-medium">
-                        {selectedLawElement ? 'Interaja com o conteúdo' : 'Selecione um elemento'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {selectedLawElement ? (
-                  <AITools
-                    lawContent={getFullHierarchicalContent(selectedLawElement)}
-                    lawTitle={selectedLawElement.title}
-                    selectedElement={{
-                      id: selectedLawElement.id,
-                      law_id: selectedLawElement.law_id,
-                      element_type: selectedLawElement.element_type,
-                      element_number: selectedLawElement.element_number || '',
-                      title: selectedLawElement.title,
-                      content: selectedLawElement.content
-                    }}
-                  />
-                ) : (
-                  /* Estado vazio */
-                  <div className="flex-1 flex items-center justify-center p-6">
-                    <div className="text-center text-gray-500">
-                      <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                      <p className="text-sm">Selecione um elemento para usar as ferramentas de IA</p>
-                    </div>
                   </div>
                 )}
               </div>
