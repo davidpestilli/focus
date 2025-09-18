@@ -238,8 +238,8 @@ export default function LawsPage() {
               {/* Layout para telas grandes - 3 colunas lado a lado */}
             {/* Lei Hierarchy - Left Side - 38% */}
             <div className="w-[38%] flex-shrink-0">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full">
-                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+                <div className="px-8 py-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
                   <div className="flex items-center space-x-3">
                     <div className="p-2 bg-white rounded-lg border border-gray-200">
                       <BookOpen className="h-5 w-5 text-gray-700" />
@@ -255,7 +255,7 @@ export default function LawsPage() {
                   </div>
                 </div>
 
-                <div className="p-6 h-[calc(100%-4rem)] overflow-y-auto">
+                <div className="flex-1 overflow-y-auto p-6">
                   {elementsLoading ? (
                     <div className="text-center py-8">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
