@@ -1,7 +1,7 @@
 import { useAuth } from '../contexts/AuthContext'
 import { useApp } from '../contexts/AppContext'
 import { useNavigate } from 'react-router-dom'
-import { Book, FileText, HelpCircle, Plus, Search, LogOut } from 'lucide-react'
+import { Book, FileText, HelpCircle, Plus, Search, LogOut, BookOpen } from 'lucide-react'
 import TestConnection from '../components/TestConnection'
 
 export default function Dashboard() {
@@ -76,7 +76,7 @@ export default function Dashboard() {
             </div>
 
             {/* Main Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div
                 className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
                 onClick={() => navigate('/contests')}
@@ -120,7 +120,7 @@ export default function Dashboard() {
               </div>
 
               <div
-                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer md:col-span-2 lg:col-span-1"
+                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
                 onClick={() => navigate('/questions')}
               >
                 <div className="p-6">
@@ -134,6 +134,27 @@ export default function Dashboard() {
                       </h3>
                       <p className="text-sm text-gray-500">
                         Pratique com questões geradas por IA
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
+                onClick={() => navigate('/summaries')}
+              >
+                <div className="p-6">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <BookOpen className="h-8 w-8 text-green-600" />
+                    </div>
+                    <div className="ml-4">
+                      <h3 className="text-lg font-medium text-gray-900">
+                        Resumos
+                      </h3>
+                      <p className="text-sm text-gray-500">
+                        Acesse seus resumos organizados por lei
                       </p>
                     </div>
                   </div>

@@ -3,6 +3,7 @@ import { MessageSquare, BookOpen, HelpCircle, Loader2, Save, CheckCircle, X } fr
 import { deepseekService } from '../lib/deepseek';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useQuestions, type QuestionToSave } from '../hooks/useQuestions';
+import { useSummaries, type SummaryToSave } from '../hooks/useSummaries';
 
 interface AIToolsProps {
   lawContent: string;
@@ -35,8 +36,19 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
   const [savedQuestions, setSavedQuestions] = useState<Set<string>>(new Set());
   const [savingQuestions, setSavingQuestions] = useState<Set<string>>(new Set());
   const [showQuestionTypeModal, setShowQuestionTypeModal] = useState(false);
+  const [savingSummary, setSavingSummary] = useState(false);
+  const [savedSummary, setSavedSummary] = useState(false);
 
   const { saveQuestion, generateTags, loading: savingQuestion, error: questionError } = useQuestions();
+  const { saveSummary, getTypeTranslation } = useSummaries();
+
+  // Mapear o tipo da resposta para o tipo do resumo
+  const typeMapping: Record<ToolType, 'explanation' | 'examples' | 'custom'> = {
+    'explain': 'explanation',
+    'examples': 'examples',
+    'custom': 'custom',
+    'questions': 'explanation' // fallback (não deveria ser usado)
+  };
 
   // Função para extrair uma questão específica do texto baseado no índice
   const extractQuestionText = (content: string, questionIndex: number): string => {
@@ -307,6 +319,53 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     }
   };
 
+  // Função para salvar resumo
+  const handleSaveSummary = async () => {
+    if (!activeResponse || !selectedElement) return;
+
+    // Não salvar se for resposta de questões
+    if (activeResponse.type === 'questions') return;
+
+    setSavingSummary(true);
+
+    try {
+      const summaryType = typeMapping[activeResponse.type];
+
+      // Gerar título usando IA
+      const title = await deepseekService.generateSummaryTitle(activeResponse.content, summaryType);
+
+      // Preparar dados do resumo
+      let articleNumber = selectedElement.element_number || '';
+      if (articleNumber.includes('-')) {
+        articleNumber = `Art. ${articleNumber.split('-')[0]}`;
+      }
+
+      const summaryData: SummaryToSave = {
+        law_element_id: selectedElement.id,
+        law_id: selectedElement.law_id,
+        law_name: lawTitle,
+        article_number: articleNumber,
+        type: summaryType,
+        title: title,
+        content: activeResponse.content
+      };
+
+      const success = await saveSummary(summaryData);
+
+      if (success) {
+        setSavedSummary(true);
+        // Resetar o estado após alguns segundos
+        setTimeout(() => {
+          setSavedSummary(false);
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Erro ao salvar resumo:', error);
+    } finally {
+      setSavingSummary(false);
+    }
+  };
+
   const handleQuestionTypeSelect = async (questionType: QuestionType) => {
     setShowQuestionTypeModal(false);
     if (loading) return;
@@ -349,6 +408,8 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
       return;
     }
 
+    // Resetar estado do resumo salvo ao gerar nova resposta
+    setSavedSummary(false);
     setLoading(true);
 
     try {
@@ -576,6 +637,57 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
                 <div className="mt-4 p-3 bg-blue-50 rounded-lg">
                   <p className="text-xs text-blue-700">
                     💡 <strong>Dica:</strong> As questões salvas aparecerão no Card Questões e podem ser usadas para criar sessões de estudo personalizadas.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Botão para salvar resumos quando o tipo NÃO é 'questions' */}
+            {activeResponse.type !== 'questions' && selectedElement && (
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900">
+                      Salvar Resumo no Banco
+                    </h4>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Tipo: {getTypeTranslation(typeMapping[activeResponse.type] || 'explanation')}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSaveSummary}
+                  disabled={savingSummary || savedSummary}
+                  className={`flex items-center space-x-2 px-4 py-2 text-sm rounded-md transition-colors ${
+                    savedSummary
+                      ? 'bg-green-100 text-green-700 cursor-default'
+                      : savingSummary
+                      ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
+                      : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {savedSummary ? (
+                    <>
+                      <CheckCircle className="h-4 w-4" />
+                      <span>Resumo Salvo</span>
+                    </>
+                  ) : savingSummary ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Salvando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4" />
+                      <span>Salvar no Banco</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                  <p className="text-xs text-blue-700">
+                    💡 <strong>Dica:</strong> Os resumos salvos aparecerão no Card Resumos e podem ser acessados por artigo.
                   </p>
                 </div>
               </div>

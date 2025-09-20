@@ -6,6 +6,7 @@ import AuthPage from './pages/AuthPage'
 import LawsPage from './pages/LawsPage'
 import ContestsPage from './pages/ContestsPage'
 import QuestionsPage from './pages/QuestionsPage'
+import SummariesPage from './pages/SummariesPage'
 import StudySessionPage from './pages/StudySessionPage'
 import { useAuth } from './contexts/AuthContext'
 
@@ -17,6 +18,7 @@ function ProtectedRoutes() {
         <Route path="/laws" element={<LawsPage />} />
         <Route path="/contests" element={<ContestsPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
+        <Route path="/summaries" element={<SummariesPage />} />
         <Route path="/study-session" element={<StudySessionPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

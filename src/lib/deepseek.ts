@@ -29,6 +29,52 @@ class DeepSeekService {
     }
   }
 
+  // Função para limpar frases introdutórias e de despedida da IA
+  private cleanAIResponse(content: string): string {
+    // Padrões de frases introdutórias comuns
+    const introPatterns = [
+      /^Claro!\s*/i,
+      /^Certamente!\s*/i,
+      /^Vamos analisar[\s\S]*?\./i,
+      /^Perfeito!\s*/i,
+      /^Excelente pergunta!\s*/i,
+      /^Vou explicar[\s\S]*?\./i,
+      /^Com prazer[\s\S]*?\./i,
+      /^Ótima pergunta[\s\S]*?\./i
+    ];
+
+    // Padrões de frases de despedida comuns
+    const outroPatterns = [
+      /Espero que[\s\S]*?[!.]\s*$/i,
+      /Boa sorte[\s\S]*?[!.]\s*$/i,
+      /Estude bem[\s\S]*?[!.]\s*$/i,
+      /Qualquer dúvida[\s\S]*?[!.]\s*$/i,
+      /Se precisar[\s\S]*?[!.]\s*$/i,
+      /Bons estudos[\s\S]*?[!.]\s*$/i,
+      /😊[\s\S]*$/,
+      /👍[\s\S]*$/,
+      /🙂[\s\S]*$/
+    ];
+
+    let cleanedContent = content.trim();
+
+    // Remover frases introdutórias
+    for (const pattern of introPatterns) {
+      cleanedContent = cleanedContent.replace(pattern, '');
+    }
+
+    // Remover frases de despedida
+    for (const pattern of outroPatterns) {
+      cleanedContent = cleanedContent.replace(pattern, '');
+    }
+
+    // Limpar múltiplas quebras de linha consecutivas
+    cleanedContent = cleanedContent.replace(/\n\s*\n\s*\n/g, '\n\n');
+
+    // Remover espaços extras no início e fim
+    return cleanedContent.trim();
+  }
+
   async chat(messages: DeepSeekMessage[]): Promise<string> {
     if (!this.apiKey) {
       throw new Error('API key do DeepSeek não configurada. Configure VITE_DEEPSEEK_API_KEY no arquivo .env');
@@ -97,7 +143,8 @@ Forneça uma explicação clara sobre:
 4. Pontos importantes para memorização`
     };
 
-    return await this.chat([systemMessage, userMessage]);
+    const response = await this.chat([systemMessage, userMessage]);
+    return this.cleanAIResponse(response);
   }
 
   // Método específico para dar exemplos práticos
@@ -122,7 +169,8 @@ Por favor, forneça:
 4. Diferenças com dispositivos similares, se houver`
     };
 
-    return await this.chat([systemMessage, userMessage]);
+    const response = await this.chat([systemMessage, userMessage]);
+    return this.cleanAIResponse(response);
   }
 
   // Método específico para gerar questões
@@ -148,7 +196,8 @@ Por favor, crie:
 Formate as questões de forma clara e inclua as respostas corretas com explicações.`
     };
 
-    return await this.chat([systemMessage, userMessage]);
+    const response = await this.chat([systemMessage, userMessage]);
+    return this.cleanAIResponse(response);
   }
 
   // Método específico para gerar questões por tipo
@@ -212,7 +261,8 @@ ${lawContent}
 ${typeInstructions}`
     };
 
-    return await this.chat([systemMessage, userMessage]);
+    const response = await this.chat([systemMessage, userMessage]);
+    return this.cleanAIResponse(response);
   }
 
   // Método para estruturar uma questão individual em JSON
@@ -327,7 +377,51 @@ Pergunta do usuário: ${question}
 Responda de forma clara e fundamentada no contexto fornecido.`
     };
 
-    return await this.chat([systemMessage, userMessage]);
+    const response = await this.chat([systemMessage, userMessage]);
+    return this.cleanAIResponse(response);
+  }
+
+  // Método específico para gerar título para resumos
+  async generateSummaryTitle(content: string, type: 'explanation' | 'examples' | 'custom'): Promise<string> {
+    const typeDescriptions = {
+      'explanation': 'explicação didática sobre o dispositivo legal',
+      'examples': 'exemplos práticos de aplicação da lei',
+      'custom': 'resposta a pergunta personalizada sobre a lei'
+    };
+
+    const systemMessage: DeepSeekMessage = {
+      role: 'system',
+      content: `Você é um especialista em criar títulos concisos e informativos para conteúdo jurídico.
+
+      Crie um título de no máximo 60 caracteres que seja:
+      - Descritivo e específico
+      - Profissional e claro
+      - Que capture a essência do conteúdo
+      - Sem usar aspas ou caracteres especiais
+
+      Responda APENAS com o título, sem texto adicional.`
+    };
+
+    const userMessage: DeepSeekMessage = {
+      role: 'user',
+      content: `Crie um título conciso para esta ${typeDescriptions[type]}:
+
+${content.substring(0, 500)}${content.length > 500 ? '...' : ''}
+
+Título:`
+    };
+
+    try {
+      const response = await this.chat([systemMessage, userMessage]);
+      // Limpar e truncar o título se necessário
+      return response.trim().replace(/['"]/g, '').substring(0, 60);
+    } catch (error) {
+      console.error('Erro ao gerar título:', error);
+      // Fallback: usar primeiras palavras do conteúdo
+      const fallbackTitle = content.substring(0, 50).trim();
+      const lastSpace = fallbackTitle.lastIndexOf(' ');
+      return lastSpace > 0 ? fallbackTitle.substring(0, lastSpace) + '...' : fallbackTitle;
+    }
   }
 }
 
