@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquare, BookOpen, HelpCircle, Loader2, Save, CheckCircle } from 'lucide-react';
+import { MessageSquare, BookOpen, HelpCircle, Loader2, Save, CheckCircle, X } from 'lucide-react';
 import { deepseekService } from '../lib/deepseek';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useQuestions, type QuestionToSave } from '../hooks/useQuestions';
@@ -19,6 +19,8 @@ interface AIToolsProps {
 
 type ToolType = 'explain' | 'examples' | 'questions' | 'custom';
 
+type QuestionType = 'system_default' | 'true_false' | 'multiple_choice' | 'essay';
+
 interface AIResponse {
   type: ToolType;
   content: string;
@@ -32,12 +34,13 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [savedQuestions, setSavedQuestions] = useState<Set<string>>(new Set());
   const [savingQuestions, setSavingQuestions] = useState<Set<string>>(new Set());
+  const [showQuestionTypeModal, setShowQuestionTypeModal] = useState(false);
 
   const { saveQuestion, generateTags, loading: savingQuestion, error: questionError } = useQuestions();
 
   // Função para extrair uma questão específica do texto baseado no índice
   const extractQuestionText = (content: string, questionIndex: number): string => {
-    // Dividir o conteúdo em seções principais
+    // Primeiro, tentar o formato de seções (Padrão do Sistema)
     const sections = [];
 
     const multipleChoiceMatch = content.match(/(1\.\s*Questões de Múltipla Escolha[\s\S]*?)(?=2\.\s*Questões|$)/i);
@@ -48,26 +51,51 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     if (trueFalseMatch) sections.push(trueFalseMatch[1]);
     if (essayMatch) sections.push(essayMatch[1]);
 
-    let currentIndex = 0;
+    // Se encontrou seções, usar o método antigo
+    if (sections.length > 0) {
+      let currentIndex = 0;
 
-    for (const section of sections) {
-      // Para múltipla escolha e V/F, dividir por "Questão X"
-      if (section.includes('Múltipla Escolha') || section.includes('Verdadeiro ou Falso')) {
-        const questions = section.split(/(?=Questão\s+\d+)/);
-        for (const q of questions) {
-          if (q.trim() && q.includes('Questão')) {
-            if (currentIndex === questionIndex) {
-              return q.trim();
+      for (const section of sections) {
+        // Para múltipla escolha e V/F, dividir por "Questão X"
+        if (section.includes('Múltipla Escolha') || section.includes('Verdadeiro ou Falso')) {
+          const questions = section.split(/(?=Questão\s+\d+)/);
+          for (const q of questions) {
+            if (q.trim() && q.includes('Questão')) {
+              if (currentIndex === questionIndex) {
+                return q.trim();
+              }
+              currentIndex++;
             }
-            currentIndex++;
           }
+        } else if (section.includes('Dissertativa')) {
+          // Para dissertativa, pegar a seção inteira
+          if (currentIndex === questionIndex) {
+            return section.trim();
+          }
+          currentIndex++;
         }
-      } else if (section.includes('Dissertativa')) {
-        // Para dissertativa, pegar a seção inteira
-        if (currentIndex === questionIndex) {
-          return section.trim();
+      }
+    } else {
+      // Se não encontrou seções, tentar detectar questões individuais
+      // Dividir por padrões comuns de questões
+      const questionPatterns = [
+        /(?=\*\*Questão\s+\d+)/gi,
+        /(?=Questão\s+\d+[:\.]?)/gi,
+        /(?=\d+\s*[\-\.]\s*)/gi,
+        /(?=\*\*\d+\s*[\-\.])/gi
+      ];
+
+      for (const pattern of questionPatterns) {
+        const questions = content.split(pattern).filter(q => q.trim().length > 10);
+        if (questions.length > questionIndex && questions[questionIndex]) {
+          return questions[questionIndex].trim();
         }
-        currentIndex++;
+      }
+
+      // Fallback: dividir por quebras de linha duplas e tentar encontrar questões
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+      if (paragraphs.length > questionIndex) {
+        return paragraphs[questionIndex].trim();
       }
     }
 
@@ -78,6 +106,7 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
   const countQuestions = (content: string): number => {
     let count = 0;
 
+    // Primeiro, tentar o formato de seções (Padrão do Sistema)
     const multipleChoiceMatch = content.match(/(1\.\s*Questões de Múltipla Escolha[\s\S]*?)(?=2\.\s*Questões|$)/i);
     const trueFalseMatch = content.match(/(2\.\s*Questões de Verdadeiro ou Falso[\s\S]*?)(?=3\.\s*Questão|$)/i);
     const essayMatch = content.match(/(3\.\s*Questão Dissertativa[\s\S]*?)$/i);
@@ -96,7 +125,35 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
       count += 1; // Uma questão dissertativa
     }
 
-    return count;
+    // Se encontrou seções, retornar a contagem
+    if (count > 0) {
+      return count;
+    }
+
+    // Se não encontrou seções, tentar contar questões individuais
+    // Contar por padrões comuns de questões
+    const questionPatterns = [
+      /\*\*Questão\s+\d+/gi,
+      /Questão\s+\d+[:\.]?/gi,
+      /^\d+\s*[\-\.]\s*/gm,
+      /\*\*\d+\s*[\-\.]/gi
+    ];
+
+    let maxCount = 0;
+    for (const pattern of questionPatterns) {
+      const matches = content.match(pattern);
+      if (matches) {
+        maxCount = Math.max(maxCount, matches.length);
+      }
+    }
+
+    // Se ainda não encontrou, tentar contar por parágrafos substanciais
+    if (maxCount === 0) {
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+      maxCount = Math.min(paragraphs.length, 6); // Limitar a 6 questões como esperado
+    }
+
+    return maxCount;
   };
 
   // Função para obter informações de uma questão para display
@@ -104,18 +161,70 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     const questionText = extractQuestionText(content, questionIndex);
 
     let type = 'Questão';
-    if (questionText.includes('Múltipla Escolha') || questionText.includes('A)')) {
+
+    // Detectar tipo por características do texto
+    if (questionText.includes('Múltipla Escolha') || questionText.includes('A)') || questionText.includes('a)') ||
+        questionText.includes('B)') || questionText.includes('b)') ||
+        (questionText.includes('A.') && questionText.includes('B.') && questionText.includes('C.'))) {
       type = 'Múltipla Escolha';
-    } else if (questionText.includes('Verdadeiro') || questionText.includes('Falso')) {
+    } else if (questionText.includes('Verdadeiro') || questionText.includes('Falso') ||
+               questionText.includes('VERDADEIRO') || questionText.includes('FALSO') ||
+               questionText.toLowerCase().includes('verdadeiro') || questionText.toLowerCase().includes('falso') ||
+               questionText.includes('V ou F') || questionText.includes('(V/F)')) {
       type = 'Verdadeiro/Falso';
-    } else if (questionText.includes('Dissertativa')) {
+    } else if (questionText.includes('Dissertativa') || questionText.includes('dissertativa') ||
+               questionText.includes('Discursiva') || questionText.includes('discursiva') ||
+               questionText.includes('Comente') || questionText.includes('Explique') ||
+               questionText.includes('Analise') || questionText.includes('Justifique') ||
+               questionText.length > 300) { // Questões longas provavelmente são dissertativas
       type = 'Dissertativa';
     }
 
     // Extrair os primeiros 100 caracteres da questão para preview
-    let preview = questionText.replace(/Questão\s+\d+\s*/, '').substring(0, 100);
+    const preview = questionText
+      .replace(/\*\*Questão\s+\d+\*\*\s*/i, '')
+      .replace(/Questão\s+\d+[:\.]?\s*/i, '')
+      .replace(/^\d+\s*[\-\.]\s*/, '')
+      .substring(0, 100);
 
     return { text: preview, type };
+  };
+
+  // Função para detectar artigo(s) baseado no conteúdo da questão
+  const detectArticleFromQuestion = (questionText: string, correctAnswer: string, explanation: string, fallbackArticle: string): string => {
+    const fullText = `${questionText} ${correctAnswer} ${explanation}`.toLowerCase();
+
+    console.log('🔍 Debug detecção:', {
+      fullText: fullText.substring(0, 200) + '...',
+      fallbackArticle
+    });
+
+    // Verificar padrões genéricos para QUALQUER artigo usando regex mais robusta
+    const articleMatches = fullText.match(/\b(?:art\.?|artigo)\s*(\d+)/gi) || [];
+    console.log('📄 Artigos encontrados (matches):', articleMatches);
+
+    const articleNumbers = [...new Set(articleMatches.map(match => {
+      const num = match.match(/(\d+)/)?.[1];
+      return num ? parseInt(num) : null;
+    }).filter((num): num is number => num !== null))].sort((a, b) => a - b);
+
+    console.log('📄 Números de artigos únicos:', articleNumbers);
+
+    // Se encontrou artigos, formatar adequadamente
+    if (articleNumbers.length > 1) {
+      const formatted = articleNumbers.map(num => `Art. ${num}`);
+      const result = formatted.join(' e ');
+      console.log('📄 Resultado (múltiplos artigos):', result);
+      return result;
+    } else if (articleNumbers.length === 1) {
+      const result = `Art. ${articleNumbers[0]}`;
+      console.log('📄 Resultado (artigo único):', result);
+      return result;
+    }
+
+    // Fallback: usar o article_number atual do elemento selecionado
+    console.log('📄 Resultado (fallback):', fallbackArticle);
+    return fallbackArticle;
   };
 
   // Função para salvar questão individual
@@ -140,20 +249,36 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
       }
 
       // Enviar para o DeepSeek estruturar
-      const structuredQuestion = await deepseekService.structureSingleQuestion(questionText, lawTitle);
+      const structuredQuestion = await deepseekService.structureSingleQuestion(questionText, lawTitle, questionIndex);
 
       // Preparar dados para salvamento
       const tags = generateTags(lawTitle, selectedElement.element_type, selectedElement.content);
-      let articleNumber = selectedElement.element_number || '';
-      if (articleNumber.includes('-')) {
-        articleNumber = `Art. ${articleNumber.split('-')[0]}`;
+      let fallbackArticleNumber = selectedElement.element_number || '';
+      if (fallbackArticleNumber.includes('-')) {
+        fallbackArticleNumber = `Art. ${fallbackArticleNumber.split('-')[0]}`;
       }
+
+      // Detectar artigo(s) baseado no conteúdo da questão
+      const detectedArticleNumber = detectArticleFromQuestion(
+        structuredQuestion.question_text,
+        structuredQuestion.correct_answer,
+        structuredQuestion.explanation || '',
+        fallbackArticleNumber
+      );
+
+      console.log('🔍 Detecção de Artigo:', {
+        questionText: structuredQuestion.question_text,
+        correctAnswer: structuredQuestion.correct_answer,
+        explanation: structuredQuestion.explanation,
+        fallbackArticleNumber,
+        detectedArticleNumber
+      });
 
       const questionToSave: QuestionToSave = {
         law_element_id: selectedElement.id,
         law_id: selectedElement.law_id,
         law_name: lawTitle,
-        article_number: articleNumber,
+        article_number: detectedArticleNumber,
         type: structuredQuestion.type as 'multiple_choice' | 'true_false' | 'essay',
         question_text: structuredQuestion.question_text,
         options: structuredQuestion.options || null,
@@ -182,8 +307,47 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     }
   };
 
+  const handleQuestionTypeSelect = async (questionType: QuestionType) => {
+    setShowQuestionTypeModal(false);
+    if (loading) return;
+
+    setLoading(true);
+
+    try {
+      let response: string;
+
+      if (questionType === 'system_default') {
+        response = await deepseekService.generateQuestions(lawContent, lawTitle);
+      } else {
+        // Gerar questões com tipo específico
+        response = await deepseekService.generateQuestionsByType(lawContent, lawTitle, questionType);
+      }
+
+      setActiveResponse({
+        type: 'questions',
+        content: response,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      console.error('Erro ao consultar IA:', error);
+      setActiveResponse({
+        type: 'questions',
+        content: `Erro ao processar solicitação: ${error instanceof Error ? error.message : 'Erro desconhecido'}`,
+        timestamp: new Date()
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleToolClick = async (toolType: ToolType, customQ?: string) => {
     if (loading) return;
+
+    // Para questões, mostrar modal de seleção de tipo
+    if (toolType === 'questions') {
+      setShowQuestionTypeModal(true);
+      return;
+    }
 
     setLoading(true);
 
@@ -196,9 +360,6 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
           break;
         case 'examples':
           response = await deepseekService.providePracticalExamples(lawContent, lawTitle);
-          break;
-        case 'questions':
-          response = await deepseekService.generateQuestions(lawContent, lawTitle);
           break;
         case 'custom':
           if (!customQ?.trim()) return;
@@ -422,6 +583,84 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
           </div>
           <div className="text-xs text-gray-400 px-4 py-3 border-t border-gray-200 flex-shrink-0">
             Resposta gerada em {activeResponse.timestamp.toLocaleTimeString()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Seleção de Tipo de Questão */}
+      {showQuestionTypeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            {/* Header do Modal */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Tipo de Questões
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Selecione o tipo de questão que deseja gerar
+                </p>
+              </div>
+              <button
+                onClick={() => setShowQuestionTypeModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Opções */}
+            <div className="p-6 space-y-3">
+              <button
+                onClick={() => handleQuestionTypeSelect('system_default')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Padrão do Sistema</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  Mix de questões: múltipla escolha, verdadeiro/falso e dissertativa
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleQuestionTypeSelect('multiple_choice')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Múltipla Escolha</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  6 questões de múltipla escolha com 5 alternativas cada
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleQuestionTypeSelect('true_false')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Verdadeiro/Falso</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  6 questões de verdadeiro ou falso
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleQuestionTypeSelect('essay')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Discursiva</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  6 questões dissertativas com respostas detalhadas
+                </div>
+              </button>
+            </div>
+
+            {/* Footer do Modal */}
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setShowQuestionTypeModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}

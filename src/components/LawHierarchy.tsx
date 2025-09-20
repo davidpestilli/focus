@@ -92,7 +92,7 @@ const getDisplaySubtitle = (element: LawElement) => {
   const elementsWithSubtitle = ['article', 'paragraph', 'clause', 'item']
 
   if (elementsWithSubtitle.includes(element.element_type) && element.content) {
-    let content = element.content
+    const content = element.content
 
     // Para elementos numerados, o content já está limpo (sem prefixos)
     // Mostrar os primeiros 120 caracteres como preview

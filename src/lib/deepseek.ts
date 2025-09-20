@@ -151,8 +151,72 @@ Formate as questões de forma clara e inclua as respostas corretas com explicaç
     return await this.chat([systemMessage, userMessage]);
   }
 
+  // Método específico para gerar questões por tipo
+  async generateQuestionsByType(lawContent: string, lawTitle: string, questionType: string): Promise<string> {
+    const systemMessage: DeepSeekMessage = {
+      role: 'system',
+      content: `Você é um especialista em elaboração de questões para concursos públicos e exames de direito. Crie questões no estilo de concursos brasileiros (CESPE, FCC, FGV, etc.).`
+    };
+
+    let typeInstructions = '';
+
+    switch (questionType) {
+      case 'multiple_choice':
+        typeInstructions = `
+Por favor, crie 6 questões de múltipla escolha com as seguintes características:
+- Cada questão deve ter 5 alternativas (A, B, C, D, E)
+- Apenas uma alternativa correta
+- Alternativas plausíveis e bem elaboradas
+- Nível de dificuldade variado (2 fáceis, 2 médias, 2 difíceis)
+- Formate as questões de forma clara e inclua as respostas corretas com explicações`;
+        break;
+
+      case 'true_false':
+        typeInstructions = `
+Por favor, crie 6 questões de verdadeiro ou falso com as seguintes características:
+- Afirmações claras e objetivas
+- Justificativas detalhadas para cada resposta
+- Nível de dificuldade variado (2 fáceis, 2 médias, 2 difíceis)
+- Evite pegadinhas óbvias, mas teste conhecimento específico
+- Formate as questões de forma clara e inclua as respostas corretas com explicações`;
+        break;
+
+      case 'essay':
+        typeInstructions = `
+Por favor, crie 6 questões dissertativas com as seguintes características:
+- Questões que exijam reflexão e análise
+- Respostas esperadas detalhadas (mínimo 100 palavras cada)
+- Nível de dificuldade variado (2 fáceis, 2 médias, 2 difíceis)
+- Questões que permitam demonstrar conhecimento prático e teórico
+- Formate as questões de forma clara e inclua as respostas esperadas completas`;
+        break;
+
+      default:
+        typeInstructions = `
+Por favor, crie:
+1. 3 questões de múltipla escolha (A, B, C, D, E)
+2. 2 questões de verdadeiro ou falso com justificativa
+3. 1 questão dissertativa curta
+
+Formate as questões de forma clara e inclua as respostas corretas com explicações.`;
+    }
+
+    const userMessage: DeepSeekMessage = {
+      role: 'user',
+      content: `Com base no seguinte dispositivo legal, elabore questões de concurso:
+
+**${lawTitle}**
+
+${lawContent}
+
+${typeInstructions}`
+    };
+
+    return await this.chat([systemMessage, userMessage]);
+  }
+
   // Método para estruturar uma questão individual em JSON
-  async structureSingleQuestion(questionText: string, lawTitle: string): Promise<any> {
+  async structureSingleQuestion(questionText: string, lawTitle: string, questionIndex?: number): Promise<any> {
     const systemMessage: DeepSeekMessage = {
       role: 'system',
       content: `Você é um especialista em processamento de questões para concursos públicos.
@@ -216,9 +280,22 @@ RESPONDA APENAS COM O JSON - SEM TEXTO ADICIONAL.`
         cleanResponse = cleanResponse.replace(/```\s*/, '').replace(/\s*```$/, '');
       }
 
-      const question = JSON.parse(cleanResponse);
+      const parsedResponse = JSON.parse(cleanResponse);
 
-      if (!question.type || !question.question_text) {
+      // Se a resposta é um array, pegar o elemento específico baseado no índice
+      // Se é um objeto, usar diretamente
+      let question;
+      if (Array.isArray(parsedResponse)) {
+        // Se foi fornecido um índice e é válido, usar esse índice
+        const index = typeof questionIndex === 'number' && questionIndex >= 0 && questionIndex < parsedResponse.length
+          ? questionIndex
+          : 0; // fallback para o primeiro elemento
+        question = parsedResponse[index];
+      } else {
+        question = parsedResponse;
+      }
+
+      if (!question || !question.type || !question.question_text) {
         throw new Error('Objeto JSON inválido - faltam campos obrigatórios');
       }
 

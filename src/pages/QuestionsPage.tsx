@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, BookOpen, HelpCircle, Trash2, Eye, EyeOff, Bot, X, Send, MessageCircle } from 'lucide-react'
+import { ChevronLeft, BookOpen, HelpCircle, Trash2, Eye, EyeOff, Bot, X, Send, MessageCircle, Loader2, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useQuestions, type StudyQuestion } from '../hooks/useQuestions'
 import { useLaws } from '../hooks/useLaws'
 import { deepseekService } from '../lib/deepseek'
+import { supabase } from '../lib/supabase'
 import { MarkdownRenderer } from '../components/MarkdownRenderer'
 
 interface LawWithQuestions {
@@ -50,8 +51,14 @@ export default function QuestionsPage() {
     tags: string[]
     topic: string
   }>>([])
+  const [showQuestionTypeModal, setShowQuestionTypeModal] = useState(false)
+  const [pendingQuestionGeneration, setPendingQuestionGeneration] = useState(false)
+  const [questionsResponse, setQuestionsResponse] = useState<string>('')
+  const [showGeneratedQuestionsSection, setShowGeneratedQuestionsSection] = useState(false)
+  const [savingQuestions, setSavingQuestions] = useState<Set<string>>(new Set())
+  const [savedQuestions, setSavedQuestions] = useState<Set<string>>(new Set())
 
-  const { getQuestionsByLaws, getAllQuestions, deleteQuestion, deleteMultipleQuestions, updateQuestion, saveQuestion } = useQuestions()
+  const { getQuestionsByLaws, getAllQuestions, deleteQuestion, deleteMultipleQuestions, updateQuestion, saveQuestion, generateTags } = useQuestions()
   const { laws } = useLaws()
   const navigate = useNavigate()
 
@@ -71,12 +78,9 @@ export default function QuestionsPage() {
     try {
       // Carregar questões agrupadas por lei
       const questionsByLaws = await getQuestionsByLaws()
-      console.log('Questões carregadas:', questionsByLaws)
-      console.log('Leis disponíveis:', laws)
 
       // Se não há questões, definir lista vazia
       if (Object.keys(questionsByLaws).length === 0) {
-        console.log('Nenhuma questão encontrada')
         setLawsWithQuestions([])
         return
       }
@@ -84,7 +88,6 @@ export default function QuestionsPage() {
       // Mapear questões com informações das leis
       const lawsData: LawWithQuestions[] = Object.entries(questionsByLaws).map(([lawId, questions]) => {
         const law = laws.find(l => l.id === lawId)
-        console.log(`Processando lei ${lawId}:`, law, `com ${questions.length} questões`)
         return {
           id: lawId,
           name: law?.name || 'Lei não encontrada',
@@ -92,8 +95,6 @@ export default function QuestionsPage() {
           questions
         }
       }).filter(law => law.questionCount > 0)
-
-      console.log('Dados finais das leis:', lawsData)
       setLawsWithQuestions(lawsData)
     } catch (error) {
       console.error('Erro ao carregar questões:', error)
@@ -426,29 +427,271 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
     }
   }
 
-  const handleSaveGeneratedQuestion = async (questionData: any) => {
+  // Funções utilitárias para contar e extrair questões (copiadas do AITools)
+  const countQuestions = (content: string): number => {
+    let count = 0;
+
+    // Primeiro, tentar o formato de seções (Padrão do Sistema)
+    const multipleChoiceMatch = content.match(/(1\.\s*Questões de Múltipla Escolha[\s\S]*?)(?=2\.\s*Questões|$)/i);
+    const trueFalseMatch = content.match(/(2\.\s*Questões de Verdadeiro ou Falso[\s\S]*?)(?=3\.\s*Questão|$)/i);
+    const essayMatch = content.match(/(3\.\s*Questão Dissertativa[\s\S]*?)$/i);
+
+    if (multipleChoiceMatch) {
+      const questions = multipleChoiceMatch[1].split(/(?=Questão\s+\d+)/);
+      count += questions.filter(q => q.trim() && q.includes('Questão')).length;
+    }
+
+    if (trueFalseMatch) {
+      const questions = trueFalseMatch[1].split(/(?=Questão\s+\d+)/);
+      count += questions.filter(q => q.trim() && q.includes('Questão')).length;
+    }
+
+    if (essayMatch) {
+      count += 1; // Uma questão dissertativa
+    }
+
+    // Se encontrou seções, retornar a contagem
+    if (count > 0) {
+      return count;
+    }
+
+    // Se não encontrou seções, tentar contar questões individuais
+    const questionPatterns = [
+      /\*\*Questão\s+\d+/gi,
+      /Questão\s+\d+[:\.]?/gi,
+      /^\d+\s*[\-\.]\s*/gm,
+      /\*\*\d+\s*[\-\.]/gi
+    ];
+
+    let maxCount = 0;
+    for (const pattern of questionPatterns) {
+      const matches = content.match(pattern);
+      if (matches) {
+        maxCount = Math.max(maxCount, matches.length);
+      }
+    }
+
+    // Se ainda não encontrou, tentar contar por parágrafos substanciais
+    if (maxCount === 0) {
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+      maxCount = Math.min(paragraphs.length, 6); // Limitar a 6 questões como esperado
+    }
+
+    return maxCount;
+  };
+
+  const extractQuestionText = (content: string, questionIndex: number): string => {
+    // Primeiro, tentar o formato de seções (Padrão do Sistema)
+    const sections = [];
+
+    const multipleChoiceMatch = content.match(/(1\.\s*Questões de Múltipla Escolha[\s\S]*?)(?=2\.\s*Questões|$)/i);
+    const trueFalseMatch = content.match(/(2\.\s*Questões de Verdadeiro ou Falso[\s\S]*?)(?=3\.\s*Questão|$)/i);
+    const essayMatch = content.match(/(3\.\s*Questão Dissertativa[\s\S]*?)$/i);
+
+    if (multipleChoiceMatch) sections.push(multipleChoiceMatch[1]);
+    if (trueFalseMatch) sections.push(trueFalseMatch[1]);
+    if (essayMatch) sections.push(essayMatch[1]);
+
+    // Se encontrou seções, usar o método antigo
+    if (sections.length > 0) {
+      let currentIndex = 0;
+
+      for (const section of sections) {
+        // Para múltipla escolha e V/F, dividir por "Questão X"
+        if (section.includes('Múltipla Escolha') || section.includes('Verdadeiro ou Falso')) {
+          const questions = section.split(/(?=Questão\s+\d+)/);
+          for (const q of questions) {
+            if (q.trim() && q.includes('Questão')) {
+              if (currentIndex === questionIndex) {
+                return q.trim();
+              }
+              currentIndex++;
+            }
+          }
+        } else if (section.includes('Dissertativa')) {
+          // Para dissertativa, pegar a seção inteira
+          if (currentIndex === questionIndex) {
+            return section.trim();
+          }
+          currentIndex++;
+        }
+      }
+    } else {
+      // Se não encontrou seções, tentar detectar questões individuais
+      const questionPatterns = [
+        /(?=\*\*Questão\s+\d+)/gi,
+        /(?=Questão\s+\d+[:\.]?)/gi,
+        /(?=\d+\s*[\-\.]\s*)/gi,
+        /(?=\*\*\d+\s*[\-\.])/gi
+      ];
+
+      for (const pattern of questionPatterns) {
+        const questions = content.split(pattern).filter(q => q.trim().length > 10);
+        if (questions.length > questionIndex && questions[questionIndex]) {
+          return questions[questionIndex].trim();
+        }
+      }
+
+      // Fallback: dividir por quebras de linha duplas e tentar encontrar questões
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+      if (paragraphs.length > questionIndex) {
+        return paragraphs[questionIndex].trim();
+      }
+    }
+
+    return '';
+  };
+
+  const getQuestionInfo = (content: string, questionIndex: number): { text: string; type: string } => {
+    const questionText = extractQuestionText(content, questionIndex);
+
+    let type = 'Questão';
+
+    // Detectar tipo por características do texto
+    // Primeiro, verificar se é Verdadeiro/Falso (prioridade alta)
+    if (questionText.includes('Verdadeiro') || questionText.includes('Falso') ||
+        questionText.includes('VERDADEIRO') || questionText.includes('FALSO') ||
+        questionText.toLowerCase().includes('verdadeiro') || questionText.toLowerCase().includes('falso') ||
+        questionText.includes('V ou F') || questionText.includes('(V/F)') ||
+        questionText.includes('(V)') || questionText.includes('(F)') ||
+        questionText.includes('** (V)') || questionText.includes('** (F)')) {
+      type = 'Verdadeiro/Falso';
+    } else if (questionText.includes('Múltipla Escolha') || questionText.includes('A)') || questionText.includes('a)') ||
+        questionText.includes('B)') || questionText.includes('b)') ||
+        (questionText.includes('A.') && questionText.includes('B.') && questionText.includes('C.'))) {
+      type = 'Múltipla Escolha';
+    } else if (questionText.includes('Dissertativa') || questionText.includes('dissertativa') ||
+               questionText.includes('Discursiva') || questionText.includes('discursiva') ||
+               questionText.includes('Comente') || questionText.includes('Explique') ||
+               questionText.includes('Analise') || questionText.includes('Justifique') ||
+               questionText.length > 300) { // Questões longas provavelmente são dissertativas
+      type = 'Dissertativa';
+    }
+
+    // Extrair os primeiros 200 caracteres da questão para preview
+    const preview = questionText
+      .replace(/\*\*Questão\s+\d+\*\*\s*/i, '')
+      .replace(/Questão\s+\d+[:\.]?\s*/i, '')
+      .replace(/^\d+\s*[\-\.]\s*/, '')
+      .substring(0, 200);
+
+    return { text: preview, type };
+  };
+
+  // Função para iniciar o processo de criação de questões (similar ao botão Gerar Questões do AITools)
+  const handleQuestionCreation = () => {
+    setShowQuestionTypeModal(true)
+  }
+
+  // Função para selecionar tipo de questão e gerar questões
+  const handleQuestionTypeSelect = async (questionType: 'system_default' | 'true_false' | 'multiple_choice' | 'essay') => {
+    setShowQuestionTypeModal(false)
     if (!currentQuestionForChat) return
 
+    setPendingQuestionGeneration(true)
+
     try {
+      // Buscar o elemento da lei original para usar seu conteúdo
+      const { data: lawElement, error } = await supabase
+        .from('law_elements')
+        .select('*')
+        .eq('id', currentQuestionForChat.law_element_id)
+        .single()
+
+      if (error || !lawElement) {
+        throw new Error('Não foi possível encontrar o elemento da lei original')
+      }
+
+      // Usar o conteúdo do elemento da lei original (igual ao botão Gerar Questões)
+      const lawContent = lawElement.content
+      const lawTitle = lawElement.title
+
+      let response: string
+
+      if (questionType === 'system_default') {
+        response = await deepseekService.generateQuestions(lawContent, lawTitle)
+      } else {
+        response = await deepseekService.generateQuestionsByType(lawContent, lawTitle, questionType)
+      }
+
+      // Armazenar o response diretamente (igual ao botão Gerar Questões original)
+      setQuestionsResponse(response)
+      setShowGeneratedQuestionsSection(true)
+
+    } catch (error) {
+      console.error('Erro ao gerar questões:', error)
+      alert('Erro ao gerar questões. Tente novamente.')
+    } finally {
+      setPendingQuestionGeneration(false)
+    }
+  }
+
+  // Função auxiliar para estruturar questões a partir de texto livre
+  const structureQuestionsFromResponse = async (response: string, lawTitle: string): Promise<any[]> => {
+    // Esta é uma implementação simplificada - você pode melhorar conforme necessário
+    try {
+      const structuredQuestion = await deepseekService.structureSingleQuestion(response, lawTitle, 0)
+      return [structuredQuestion]
+    } catch (error) {
+      console.error('Erro ao estruturar questão:', error)
+      return []
+    }
+  }
+
+  const handleSaveGeneratedQuestion = async (questionIndex: number) => {
+    if (!currentQuestionForChat || !questionsResponse) return
+
+    const questionId = `${questionIndex}`;
+
+    // Verificar se já está salva ou sendo salva
+    if (savedQuestions.has(questionId) || savingQuestions.has(questionId)) return;
+
+    try {
+      // Marcar como "salvando"
+      setSavingQuestions(prev => new Set([...prev, questionId]));
+      // Buscar o elemento da lei para gerar tags corretamente
+      const { data: lawElement, error } = await supabase
+        .from('law_elements')
+        .select('*')
+        .eq('id', currentQuestionForChat.law_element_id)
+        .single()
+
+      if (error || !lawElement) {
+        throw new Error('Não foi possível encontrar o elemento da lei original')
+      }
+
+      // Extrair o texto da questão específica (igual ao botão Gerar Questões)
+      const questionText = extractQuestionText(questionsResponse, questionIndex);
+
+      if (!questionText) {
+        console.error('Não foi possível extrair o texto da questão');
+        return;
+      }
+
+      // Enviar para o DeepSeek estruturar (igual ao botão Gerar Questões)
+      const structuredQuestion = await deepseekService.structureSingleQuestion(questionText, lawElement.title, questionIndex);
+
+      // Gerar tags igual ao botão "Gerar Questões"
+      const tags = generateTags(lawElement.title, lawElement.element_type, lawElement.content)
+
       const questionToSave = {
         law_element_id: currentQuestionForChat.law_element_id,
         law_id: currentQuestionForChat.law_id,
         law_name: currentQuestionForChat.law_name,
         article_number: currentQuestionForChat.article_number,
-        type: questionData.type,
-        question_text: questionData.question_text,
-        options: questionData.options,
-        correct_answer: questionData.correct_answer,
-        explanation: questionData.explanation,
-        tags: questionData.tags,
-        topic: questionData.topic
+        type: structuredQuestion.type as 'multiple_choice' | 'true_false' | 'essay',
+        question_text: structuredQuestion.question_text,
+        options: structuredQuestion.options || null,
+        correct_answer: structuredQuestion.correct_answer,
+        explanation: { general: structuredQuestion.explanation },
+        tags: tags,
+        topic: tags[0] || 'geral'
       }
 
       const success = await saveQuestion(questionToSave)
       if (success) {
+        setSavedQuestions(prev => new Set([...prev, questionId]))
         alert('Questão salva com sucesso!')
-        // Remover questão da lista de geradas
-        setGeneratedQuestions(prev => prev.filter(q => q !== questionData))
         // Recarregar dados
         await loadLawsWithQuestions()
       } else {
@@ -457,6 +700,13 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
     } catch (error) {
       console.error('Erro ao salvar questão:', error)
       alert('Erro ao salvar questão. Tente novamente.')
+    } finally {
+      // Remover do estado "salvando"
+      setSavingQuestions(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(questionId)
+        return newSet
+      })
     }
   }
 
@@ -472,12 +722,31 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
     })
   }
 
+  // Função para verificar se uma questão pertence a um artigo selecionado
+  // IMPORTANTE: Deve usar a MESMA lógica que getQuestionsByArticle para evitar sobreposição
+  const questionBelongsToSelectedArticle = (question: StudyQuestion): boolean => {
+    // Detectar qual grupo de artigo esta questão pertence usando a MESMA lógica
+    const explanationText = typeof question.explanation === 'object' && question.explanation?.general
+      ? question.explanation.general
+      : String(question.explanation || '');
+
+    const detectedArticle = detectArticleFromQuestion(
+      question.question_text,
+      question.correct_answer,
+      explanationText,
+      question.article_number || 'Sem artigo'
+    );
+
+    // Verificar se este artigo detectado está entre os selecionados
+    return selectedArticles.has(detectedArticle)
+  }
+
   const handleStartStudySession = () => {
     if (!selectedLaw || selectedArticles.size === 0) return
 
     // Coletar todas as questões dos artigos selecionados
     const selectedQuestions = selectedLaw.questions.filter(question =>
-      selectedArticles.has(question.article_number || 'Sem artigo')
+      questionBelongsToSelectedArticle(question)
     )
 
     // Navegar para a Mesa de Estudo com as questões selecionadas
@@ -490,14 +759,49 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
     })
   }
 
-  // Agrupar questões por artigo
+  // Função para detectar artigo(s) baseado no conteúdo da questão
+  const detectArticleFromQuestion = (questionText: string, correctAnswer: string, explanation: string, fallbackArticle: string): string => {
+    const fullText = `${questionText} ${correctAnswer} ${explanation}`.toLowerCase();
+
+    // Verificar padrões genéricos para QUALQUER artigo usando regex robusta
+    const articleMatches = fullText.match(/\b(?:art\.?|artigo)\s*(\d+)/gi) || [];
+
+    const articleNumbers = [...new Set(articleMatches.map(match => {
+      const num = match.match(/(\d+)/)?.[1];
+      return num ? parseInt(num) : null;
+    }).filter((num): num is number => num !== null))].sort((a, b) => a - b);
+
+    // Se encontrou artigos, formatar adequadamente
+    if (articleNumbers.length > 1) {
+      const formatted = articleNumbers.map(num => `Art. ${num}`);
+      return formatted.join(' e ');
+    } else if (articleNumbers.length === 1) {
+      return `Art. ${articleNumbers[0]}`;
+    }
+
+    // Fallback: usar o article_number atual
+    return fallbackArticle;
+  };
+
+  // Agrupar questões por artigo (com detecção automática de artigos)
   const getQuestionsByArticle = (questions: StudyQuestion[]) => {
     const grouped = questions.reduce((acc, question) => {
-      const articleKey = question.article_number || 'Sem artigo'
-      if (!acc[articleKey]) {
-        acc[articleKey] = []
+      // Detectar artigo baseado no conteúdo da questão
+      const explanationText = typeof question.explanation === 'object' && question.explanation?.general
+        ? question.explanation.general
+        : String(question.explanation || '');
+
+      const detectedArticle = detectArticleFromQuestion(
+        question.question_text,
+        question.correct_answer,
+        explanationText,
+        question.article_number || 'Sem artigo'
+      );
+
+      if (!acc[detectedArticle]) {
+        acc[detectedArticle] = []
       }
-      acc[articleKey].push(question)
+      acc[detectedArticle].push(question)
       return acc
     }, {} as Record<string, StudyQuestion[]>)
 
@@ -615,7 +919,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                     </p>
 
                     <div className="flex flex-wrap gap-1">
-                      {[...new Set(law.questions.flatMap(q => q.tags))].slice(0, 4).map(tag => (
+                      {[...new Set(law.questions.flatMap(q => q.tags || []))].slice(0, 4).map(tag => (
                         <span
                           key={tag}
                           className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded-full"
@@ -696,7 +1000,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                         </div>
 
                         <div className="flex flex-wrap gap-1">
-                          {article.tags.slice(0, 3).map(tag => (
+                          {(article.tags || []).slice(0, 3).map(tag => (
                             <span
                               key={tag}
                               className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full"
@@ -734,7 +1038,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                   <div className="text-sm text-gray-600">
                     {selectedArticles.size} artigo(s) selecionado(s) •{' '}
                     {selectedLaw.questions
-                      .filter(q => selectedArticles.has(q.article_number || 'Sem artigo'))
+                      .filter(q => questionBelongsToSelectedArticle(q))
                       .length} questão(ões)
                   </div>
                   <button
@@ -768,7 +1072,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          {selectedArticle.tags.slice(0, 5).map(tag => (
+                          {(selectedArticle.tags || []).slice(0, 5).map(tag => (
                             <span
                               key={tag}
                               className="px-3 py-1 bg-gray-200 text-gray-700 text-sm font-medium rounded-full"
@@ -984,7 +1288,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
 
                         {/* Tags */}
                         <div className="flex flex-wrap gap-1">
-                          {question.tags.map(tag => (
+                          {(question.tags || []).map(tag => (
                             <span
                               key={tag}
                               className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full"
@@ -1185,7 +1489,6 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {[
                           'Pedir maiores explicações',
-                          'Criação de novas questões',
                           'Pedir exemplos práticos',
                           ...(currentQuestionForChat.type === 'multiple_choice' ? ['Explique cada uma das alternativas'] : [])
                         ].map((prompt) => (
@@ -1197,6 +1500,20 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                             {prompt}
                           </button>
                         ))}
+                        <button
+                          onClick={() => handleQuestionCreation()}
+                          disabled={pendingQuestionGeneration}
+                          className="px-3 py-2 text-sm bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition-colors text-left border border-purple-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                        >
+                          {pendingQuestionGeneration ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Gerando questões...
+                            </>
+                          ) : (
+                            'Criação de novas questões'
+                          )}
+                        </button>
                       </div>
                       <div className="border-t border-gray-200 pt-3">
                         <p className="text-xs text-gray-500">
@@ -1284,53 +1601,63 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
               </div>
 
               {/* Lado direito - Questões geradas (se houver) */}
-              {generatedQuestions.length > 0 && (
+              {showGeneratedQuestionsSection && questionsResponse && (
                 <div className="w-1/2 border-l border-gray-200 bg-gray-50">
                   <div className="p-4 border-b border-gray-200">
                     <h4 className="text-sm font-medium text-gray-900">Questões Geradas</h4>
                     <p className="text-xs text-gray-600 mt-1">
-                      {generatedQuestions.length} questão(ões) criada(s)
+                      {countQuestions(questionsResponse)} questão(ões) criada(s)
                     </p>
                   </div>
                   <div className="p-4 overflow-y-auto max-h-96 space-y-4">
-                    {generatedQuestions.map((question, index) => (
-                      <div key={index} className="bg-white rounded-lg p-4 border border-gray-200">
-                        <div className="flex items-start justify-between mb-3">
-                          <span className="text-sm font-medium text-gray-900">
-                            Questão {index + 1} - {question.type.replace('_', ' ')}
-                          </span>
-                          <button
-                            onClick={() => handleSaveGeneratedQuestion(question)}
-                            className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-                          >
-                            Inserir no Banco
-                          </button>
-                        </div>
-                        <p className="text-sm text-gray-800 mb-2">{question.question_text}</p>
-
-                        {/* Opções para múltipla escolha */}
-                        {question.type === 'multiple_choice' && question.options && (
-                          <div className="space-y-1 mb-2">
-                            {Object.entries(question.options).map(([key, value]) => (
-                              <div
-                                key={key}
-                                className={`text-xs p-1 rounded ${
-                                  key === question.correct_answer
-                                    ? 'bg-green-100 text-green-800'
-                                    : 'bg-gray-100 text-gray-700'
-                                }`}
-                              >
-                                <span className="font-medium uppercase">{key})</span> {value}
+                    {Array.from({ length: countQuestions(questionsResponse) }, (_, index) => {
+                      const questionInfo = getQuestionInfo(questionsResponse, index);
+                      return (
+                        <div key={index} className="bg-white rounded-lg p-3 border border-gray-200">
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1 mr-3">
+                              <p className="text-sm text-gray-900 line-clamp-2">
+                                Questão {index + 1} ({questionInfo.type}): {questionInfo.text}
+                                {questionInfo.text.length > 100 ? '...' : ''}
+                              </p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                                  #{questionInfo.type.toLowerCase().replace('/', '_')}
+                                </span>
+                                <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                                  #estruturada
+                                </span>
                               </div>
-                            ))}
+                            </div>
+                            <button
+                              onClick={() => handleSaveGeneratedQuestion(index)}
+                              disabled={savingQuestions.has(`${index}`) || savedQuestions.has(`${index}`)}
+                              className={`px-3 py-2 text-sm rounded-md transition-colors flex items-center space-x-2 ${
+                                savedQuestions.has(`${index}`)
+                                  ? 'bg-green-100 text-green-700 cursor-default'
+                                  : savingQuestions.has(`${index}`)
+                                  ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
+                                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              }`}
+                            >
+                              {savedQuestions.has(`${index}`) ? (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  <span>Salva</span>
+                                </>
+                              ) : savingQuestions.has(`${index}`) ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  <span>Salvando...</span>
+                                </>
+                              ) : (
+                                'Incluir no Banco'
+                              )}
+                            </button>
                           </div>
-                        )}
-
-                        <div className="text-xs text-gray-600">
-                          <span className="font-medium">Resposta:</span> {question.correct_answer}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1343,6 +1670,84 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
                 className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
               >
                 Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Seleção de Tipo de Questão */}
+      {showQuestionTypeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            {/* Header do Modal */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Tipo de Questões
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Selecione o tipo de questão que deseja gerar
+                </p>
+              </div>
+              <button
+                onClick={() => setShowQuestionTypeModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Opções */}
+            <div className="p-6 space-y-3">
+              <button
+                onClick={() => handleQuestionTypeSelect('system_default')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Padrão do Sistema</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  Mix de questões: múltipla escolha, verdadeiro/falso e dissertativa
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleQuestionTypeSelect('multiple_choice')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Múltipla Escolha</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  6 questões de múltipla escolha com 5 alternativas cada
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleQuestionTypeSelect('true_false')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Verdadeiro/Falso</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  6 questões de verdadeiro ou falso
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleQuestionTypeSelect('essay')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Discursiva</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  6 questões dissertativas com respostas detalhadas
+                </div>
+              </button>
+            </div>
+
+            {/* Footer do Modal */}
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setShowQuestionTypeModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Cancelar
               </button>
             </div>
           </div>

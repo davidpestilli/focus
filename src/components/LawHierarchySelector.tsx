@@ -87,7 +87,7 @@ const getDisplaySubtitle = (element: LawElement) => {
   const elementsWithSubtitle = ['article', 'paragraph', 'clause', 'item']
 
   if (elementsWithSubtitle.includes(element.element_type) && element.content) {
-    let content = element.content
+    const content = element.content
     return content.substring(0, 120) + (content.length > 120 ? '...' : '')
   }
   return null

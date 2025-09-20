@@ -88,7 +88,8 @@ export const useQuestions = () => {
 
     // Tags baseadas no conteúdo (detectar palavras-chave)
     const contentLower = content.toLowerCase()
-    if (contentLower.includes('falsificação')) tags.push('falsificação', 'documento')
+    if (contentLower.includes('falsificação') || contentLower.includes('falsidade')) tags.push('falsificação', 'documento', 'falsidade')
+    if (contentLower.includes('ideológica')) tags.push('ideológica', 'conteúdo', 'declaração')
     if (contentLower.includes('homicídio')) tags.push('homicídio', 'vida')
     if (contentLower.includes('furto')) tags.push('furto', 'patrimônio')
     if (contentLower.includes('roubo')) tags.push('roubo', 'patrimônio')
@@ -106,6 +107,21 @@ export const useQuestions = () => {
     if (contentLower.includes('recurso')) tags.push('recurso', 'impugnação')
     if (contentLower.includes('prova')) tags.push('prova', 'instrução')
     if (contentLower.includes('sentença')) tags.push('sentença', 'decisão')
+    if (contentLower.includes('documento')) tags.push('documento', 'autenticidade')
+    if (contentLower.includes('declaração')) tags.push('declaração', 'conteúdo')
+    if (contentLower.includes('omitir')) tags.push('omissão', 'verdade')
+    if (contentLower.includes('inserir')) tags.push('inserção', 'falsidade')
+    if (contentLower.includes('prejudicar')) tags.push('prejuízo', 'direito')
+
+    // Se não encontrou nenhuma tag específica, adicionar tags genéricas básicas
+    if (tags.length === 0) {
+      tags.push('geral')
+      // Tentar extrair número do artigo se disponível
+      const articleMatch = lawName.match(/art\.*\s*(\d+)/i)
+      if (articleMatch) {
+        tags.push(`art-${articleMatch[1]}`)
+      }
+    }
 
     // Remover duplicatas e retornar
     return [...new Set(tags)]
