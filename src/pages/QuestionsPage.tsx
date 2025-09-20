@@ -518,22 +518,58 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
       }
     } else {
       // Se não encontrou seções, tentar detectar questões individuais
+      // Primeiro, tentar encontrar onde começam as questões reais (pular introdução)
+      const questionsStartPatterns = [
+        /(?=\*\*1\.\s*[^*]*?\*\*)/gi,
+        /(?=1\.\s*(?:De acordo|Em relação|Sobre|Assinale|Marque|Analise|Julgue))/gi,
+        /(?=\*\*Questão\s*1)/gi,
+        /(?=Questão\s*1[:\.]?)/gi
+      ];
+
+      let startIndex = 0;
+      for (const pattern of questionsStartPatterns) {
+        const match = content.search(pattern);
+        if (match > 0) {
+          startIndex = match;
+          break;
+        }
+      }
+
+      // Se encontrou um ponto de início, usar apenas o conteúdo a partir daí
+      const questionsContent = startIndex > 0 ? content.substring(startIndex) : content;
+
+      // Agora dividir as questões usando padrões mais específicos
       const questionPatterns = [
-        /(?=\*\*Questão\s+\d+)/gi,
-        /(?=Questão\s+\d+[:\.]?)/gi,
-        /(?=\d+\s*[\-\.]\s*)/gi,
-        /(?=\*\*\d+\s*[\-\.])/gi
+        /(?=\*\*\d+\.\s*[^*]*?\*\*)/gi,  // **1. texto**
+        /(?=\d+\.\s*(?:De acordo|Em relação|Sobre|Assinale|Marque|Analise|Julgue|Considerando))/gi,  // 1. De acordo...
+        /(?=\*\*Questão\s+\d+)/gi,       // **Questão 1
+        /(?=Questão\s+\d+[:\.]?)/gi,     // Questão 1:
+        /(?=\d+\s*[\-\.]\s*(?!$))/gi     // 1. ou 1- (mas não no final da linha)
       ];
 
       for (const pattern of questionPatterns) {
-        const questions = content.split(pattern).filter(q => q.trim().length > 10);
+        const questions = questionsContent.split(pattern).filter(q => {
+          const trimmed = q.trim();
+          // Filtrar questões válidas: devem ter mais de 20 caracteres e não ser apenas números
+          return trimmed.length > 20 && !/^\d+[\.\-\s]*$/.test(trimmed);
+        });
+
         if (questions.length > questionIndex && questions[questionIndex]) {
           return questions[questionIndex].trim();
         }
       }
 
-      // Fallback: dividir por quebras de linha duplas e tentar encontrar questões
-      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+      // Fallback melhorado: dividir por quebras de linha duplas, mas pular possível introdução
+      const paragraphs = questionsContent.split(/\n\s*\n/).filter(p => {
+        const trimmed = p.trim();
+        // Pular parágrafos introdutórios comuns
+        if (trimmed.length < 20) return false;
+        if (trimmed.toLowerCase().includes('segue abaixo')) return false;
+        if (trimmed.toLowerCase().includes('elaboração de questões')) return false;
+        if (trimmed.toLowerCase().includes('conforme solicitado')) return false;
+        return true;
+      });
+
       if (paragraphs.length > questionIndex) {
         return paragraphs[questionIndex].trim();
       }
@@ -568,12 +604,13 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
       type = 'Dissertativa';
     }
 
-    // Extrair os primeiros 200 caracteres da questão para preview
+    // Extrair os primeiros 500 caracteres da questão para preview
     const preview = questionText
       .replace(/\*\*Questão\s+\d+\*\*\s*/i, '')
       .replace(/Questão\s+\d+[:\.]?\s*/i, '')
       .replace(/^\d+\s*[\-\.]\s*/, '')
-      .substring(0, 200);
+      .replace(/^\*\*\d+\.\s*/, '')  // Remover **1. no início
+      .substring(0, 500);
 
     return { text: preview, type };
   };
@@ -1310,7 +1347,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
       {/* Modal de IA */}
       {aiModalOpen && currentQuestionForAI && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg max-w-6xl w-full max-h-[90vh] overflow-y-auto">
             {/* Header do Modal */}
             <div className="bg-gray-50 border-b border-gray-200 px-8 py-6">
               <div className="flex items-center justify-between">
@@ -1457,7 +1494,7 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
       {/* Modal de Chat com IA */}
       {chatModalOpen && currentQuestionForChat && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col">
             {/* Header do Modal */}
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <div>
@@ -1602,23 +1639,22 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
 
               {/* Lado direito - Questões geradas (se houver) */}
               {showGeneratedQuestionsSection && questionsResponse && (
-                <div className="w-1/2 border-l border-gray-200 bg-gray-50">
+                <div className="w-3/5 border-l border-gray-200 bg-gray-50">
                   <div className="p-4 border-b border-gray-200">
                     <h4 className="text-sm font-medium text-gray-900">Questões Geradas</h4>
                     <p className="text-xs text-gray-600 mt-1">
                       {countQuestions(questionsResponse)} questão(ões) criada(s)
                     </p>
                   </div>
-                  <div className="p-4 overflow-y-auto max-h-96 space-y-4">
+                  <div className="p-4 overflow-y-auto max-h-[60vh] space-y-4">
                     {Array.from({ length: countQuestions(questionsResponse) }, (_, index) => {
                       const questionInfo = getQuestionInfo(questionsResponse, index);
                       return (
                         <div key={index} className="bg-white rounded-lg p-3 border border-gray-200">
                           <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1 mr-3">
-                              <p className="text-sm text-gray-900 line-clamp-2">
-                                Questão {index + 1} ({questionInfo.type}): {questionInfo.text}
-                                {questionInfo.text.length > 100 ? '...' : ''}
+                            <div className="flex-1 mr-3 max-h-24 overflow-y-auto">
+                              <p className="text-sm text-gray-900">
+                                <strong>Questão {index + 1} ({questionInfo.type}):</strong> {questionInfo.text}
                               </p>
                               <div className="flex flex-wrap gap-1 mt-1">
                                 <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
