@@ -592,24 +592,33 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
     let type = 'Questão';
 
     // Detectar tipo por características do texto
-    // Primeiro, verificar se é Verdadeiro/Falso (prioridade alta)
-    if (questionText.includes('Verdadeiro') || questionText.includes('Falso') ||
-        questionText.includes('VERDADEIRO') || questionText.includes('FALSO') ||
-        questionText.toLowerCase().includes('verdadeiro') || questionText.toLowerCase().includes('falso') ||
-        questionText.includes('V ou F') || questionText.includes('(V/F)') ||
-        questionText.includes('(V)') || questionText.includes('(F)') ||
-        questionText.includes('** (V)') || questionText.includes('** (F)')) {
-      type = 'Verdadeiro/Falso';
-    } else if (questionText.includes('Múltipla Escolha') || questionText.includes('A)') || questionText.includes('a)') ||
-        questionText.includes('B)') || questionText.includes('b)') ||
+    // PRIORIDADE 1: Verificar se tem alternativas múltipla escolha (mais definitivo)
+    if (questionText.includes('Múltipla Escolha') ||
+        (questionText.includes('A)') && questionText.includes('B)') && questionText.includes('C)')) ||
+        (questionText.includes('a)') && questionText.includes('b)') && questionText.includes('c)')) ||
         (questionText.includes('A.') && questionText.includes('B.') && questionText.includes('C.'))) {
       type = 'Múltipla Escolha';
-    } else if (questionText.includes('Dissertativa') || questionText.includes('dissertativa') ||
-               questionText.includes('Discursiva') || questionText.includes('discursiva') ||
-               questionText.includes('Comente') || questionText.includes('Explique') ||
-               questionText.includes('Analise') || questionText.includes('Justifique') ||
-               questionText.length > 300) { // Questões longas provavelmente são dissertativas
+    }
+    // PRIORIDADE 2: Verificar se é Verdadeiro/Falso (padrões específicos de V/F)
+    else if ((questionText.includes('( )') && (questionText.includes('Verdadeiro') || questionText.includes('Falso'))) ||
+             questionText.includes('V ou F') || questionText.includes('(V/F)') ||
+             questionText.includes('(V)') || questionText.includes('(F)') ||
+             questionText.includes('** (V)') || questionText.includes('** (F)') ||
+             (questionText.includes('**Resposta:') && (questionText.includes('Verdadeiro') || questionText.includes('Falso')))) {
+      type = 'Verdadeiro/Falso';
+    }
+    // PRIORIDADE 3: Verificar se é dissertativa
+    else if (questionText.includes('Dissertativa') || questionText.includes('dissertativa') ||
+             questionText.includes('Discursiva') || questionText.includes('discursiva') ||
+             questionText.includes('Comente') || questionText.includes('Explique') ||
+             questionText.includes('Analise') || questionText.includes('Justifique') ||
+             questionText.length > 400) { // Questões longas provavelmente são dissertativas
       type = 'Dissertativa';
+    }
+    // FALLBACK: Se não conseguiu detectar, assumir múltipla escolha se tem alternativas básicas
+    else if (questionText.includes('A)') || questionText.includes('B)') ||
+             questionText.includes('a)') || questionText.includes('b)')) {
+      type = 'Múltipla Escolha';
     }
 
     // Extrair os primeiros 500 caracteres da questão para preview
