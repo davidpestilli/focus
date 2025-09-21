@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, Trophy, Plus, Calendar, Users, BookOpen, Settings, MessageSquare, Bot, Edit, Trash2 } from 'lucide-react'
+import { ArrowLeft, Trophy, Plus, Calendar, Users, BookOpen, Settings, MessageSquare, Bot, Edit, Trash2, Target } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../contexts/AppContext'
 import { useContests } from '../hooks/useContests'
@@ -9,6 +9,7 @@ import { useLaws } from '../hooks/useLaws'
 import ContestLawSelector from '../components/ContestLawSelector'
 import LawHierarchy from '../components/LawHierarchy'
 import { AITools } from '../components/AITools'
+import { ProgressCard } from '../components/ProgressCard'
 import type { Contest, Law, LawElement } from '../types/database'
 
 type ViewMode = 'list' | 'form' | 'contest-detail' | 'add-law' | 'study-law'
@@ -32,6 +33,7 @@ export default function ContestsPage() {
   const [contestLaws, setContestLaws] = useState<Array<{law: Law, selectedElements: LawElement[]}>>([])  // Local state for display
   const [studyingLaw, setStudyingLaw] = useState<{law: Law, selectedElements: LawElement[]} | null>(null)
   const [selectedLawElement, setSelectedLawElement] = useState<LawElement | null>(null)
+  const [selectedLawForProgress, setSelectedLawForProgress] = useState<string | null>(null)
 
   const { elements: studyLawElements, loading: studyElementsLoading, buildHierarchy: buildStudyHierarchy } = useLawElements(studyingLaw?.law.id)
 
@@ -758,12 +760,20 @@ export default function ContestsPage() {
                           <span className="text-xs text-gray-500">
                             Adicionada em {new Date().toLocaleDateString('pt-BR')}
                           </span>
-                          <button
-                            onClick={() => handleStudyLaw(contestLaw)}
-                            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-                          >
-                            Estudar →
-                          </button>
+                          <div className="flex items-center space-x-3">
+                            <button
+                              onClick={() => setSelectedLawForProgress(contestLaw.law.id)}
+                              className="text-green-600 hover:text-green-700 text-sm font-medium"
+                            >
+                              Progresso
+                            </button>
+                            <button
+                              onClick={() => handleStudyLaw(contestLaw)}
+                              className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                            >
+                              Estudar →
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -771,6 +781,7 @@ export default function ContestsPage() {
                 )}
               </div>
             </div>
+
           </div>
         ) : (
           <div>
@@ -880,6 +891,28 @@ export default function ContestsPage() {
           </div>
         )}
       </main>
+      )}
+
+      {/* Modal de Progresso */}
+      {selectedLawForProgress && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">Progresso da Lei</h2>
+              <button
+                onClick={() => setSelectedLawForProgress(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="max-h-[calc(90vh-80px)] overflow-y-auto">
+              <ProgressCard lawId={selectedLawForProgress} />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
