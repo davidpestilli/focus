@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Target, MessageCircle, X, Send, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Target, MessageCircle, X, Send, Loader2, Save } from 'lucide-react'
 import { StudyQuestion, useQuestions } from '../hooks/useQuestions'
+import { useSummaries, type SummaryToSave } from '../hooks/useSummaries'
 import { deepseekService } from '../lib/deepseek'
 import { supabase } from '../lib/supabase'
 import { MarkdownRenderer } from '../components/MarkdownRenderer'
@@ -52,6 +53,9 @@ export default function StudySessionPage() {
     savingQuestions: Set<number>
     savedQuestions: Set<number>
     startTime: number
+    activeChatResponse: {type: string, content: string} | null
+    savingSummary: boolean
+    savedSummary: boolean
   }>>(new Map())
 
   // Estados temporários para questão atual
@@ -65,6 +69,7 @@ export default function StudySessionPage() {
   const [pendingQuestionGeneration, setPendingQuestionGeneration] = useState(false)
 
   const { saveQuestion, generateTags } = useQuestions()
+  const { saveSummary, getTypeTranslation } = useSummaries()
 
   // Verificar se temos dados da sessão
   useEffect(() => {
@@ -134,7 +139,10 @@ export default function StudySessionPage() {
       showGeneratedQuestionsSection: false,
       savingQuestions: new Set<number>(),
       savedQuestions: new Set<number>(),
-      startTime: Date.now()
+      startTime: Date.now(),
+      activeChatResponse: null,
+      savingSummary: false,
+      savedSummary: false
     }
   }
 
@@ -155,6 +163,9 @@ export default function StudySessionPage() {
   const chatHistory = currentQuestionState.chatHistory
   const generatedQuestions = currentQuestionState.generatedQuestions
   const startTime = currentQuestionState.startTime
+  const activeChatResponse = currentQuestionState.activeChatResponse
+  const savingSummary = currentQuestionState.savingSummary
+  const savedSummary = currentQuestionState.savedSummary
 
   const handleAnswerSelect = (answer: string) => {
     if (showFeedback) return // Não permitir mudança após mostrar feedback
@@ -306,6 +317,11 @@ Retorne APENAS um JSON no seguinte formato:
   const handleCloseChatModal = () => {
     setChatModalOpen(false)
     setChatPrompt('')
+    // Limpar estados relacionados ao resumo
+    updateQuestionState(currentQuestion.id, {
+      activeChatResponse: null,
+      savedSummary: false
+    });
     // Não resetar mais o chatHistory e generatedQuestions - eles persistem por questão
   }
 
@@ -407,9 +423,27 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
         }
       ])
 
-      updateQuestionState(currentQuestion.id, {
+      // Verificar se é uma resposta de um dos botões específicos para salvar como resumo
+      const isSpecificPrompt = [
+        'pedir maiores explicações',
+        'pedir exemplos práticos',
+        'explique cada uma das alternativas'
+      ].some(prompt => message.toLowerCase().includes(prompt.toLowerCase()));
+
+      const updates: any = {
         chatHistory: [...chatHistory, { type: 'user', message }, { type: 'ai', message: response }]
-      })
+      };
+
+      if (isSpecificPrompt) {
+        // Resetar estado do resumo salvo ao gerar nova resposta
+        updates.savedSummary = false;
+        updates.activeChatResponse = {
+          type: message,
+          content: response
+        };
+      }
+
+      updateQuestionState(currentQuestion.id, updates);
 
       // Se a resposta parece ser questões em JSON, tentar fazer parse
       if (message.toLowerCase().includes('criar') && (message.toLowerCase().includes('questão') || message.toLowerCase().includes('questões'))) {
@@ -434,6 +468,104 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
       setChatLoading(false)
     }
   }
+
+  // Função para salvar resumo (adaptada do AITools)
+  const handleSaveSummary = async () => {
+    const currentState = getQuestionState(currentQuestion.id);
+    if (!currentState.activeChatResponse) {
+      return;
+    }
+
+    updateQuestionState(currentQuestion.id, { savingSummary: true });
+
+    try {
+      // Determinar o tipo baseado no conteúdo da resposta
+      let summaryType: 'explanation' | 'examples' | 'custom' = 'explanation';
+
+      if (currentState.activeChatResponse.type.toLowerCase().includes('exemplos')) {
+        summaryType = 'examples';
+      } else if (currentState.activeChatResponse.type.toLowerCase().includes('explicações') ||
+                 currentState.activeChatResponse.type.toLowerCase().includes('alternativas')) {
+        summaryType = 'explanation';
+      } else {
+        summaryType = 'custom';
+      }
+
+      // Gerar título usando IA
+      const title = await deepseekService.generateSummaryTitle(currentState.activeChatResponse.content, summaryType);
+
+      // Buscar o elemento da lei para obter dados completos
+      const { data: lawElement, error } = await supabase
+        .from('law_elements')
+        .select('*')
+        .eq('id', currentQuestion.law_element_id)
+        .single();
+
+      if (error || !lawElement) {
+        throw new Error('Não foi possível encontrar o elemento da lei original');
+      }
+
+      // Preparar dados do resumo
+      let articleNumber = currentQuestion.article_number || '';
+      if (articleNumber.includes('-')) {
+        articleNumber = `Art. ${articleNumber.split('-')[0]}`;
+      }
+
+      // Incluir a questão no conteúdo se for "Explique cada uma das alternativas"
+      let finalContent = currentState.activeChatResponse.content;
+      if (currentState.activeChatResponse.type.toLowerCase().includes('alternativas')) {
+        // Preparar contexto da questão
+        const questionContext = `**QUESTÃO:**
+
+${currentQuestion.question_text}
+
+${currentQuestion.options ? Object.entries(currentQuestion.options).map(([key, value]) =>
+  `${key.toUpperCase()}) ${value}`).join('\n') : ''}
+
+**Resposta Correta:** ${currentQuestion.correct_answer}
+
+---
+
+**EXPLICAÇÃO DAS ALTERNATIVAS:**
+
+`;
+
+        finalContent = questionContext + currentState.activeChatResponse.content;
+      }
+
+      const summaryData: SummaryToSave = {
+        law_element_id: currentQuestion.law_element_id,
+        law_id: currentQuestion.law_id,
+        law_name: currentQuestion.law_name,
+        article_number: articleNumber,
+        type: summaryType,
+        title: title,
+        content: finalContent
+      };
+
+      const success = await saveSummary(summaryData);
+
+      if (success) {
+        // Usar uma sequência de updates mais controlada
+        updateQuestionState(currentQuestion.id, { savingSummary: false });
+
+        setTimeout(() => {
+          updateQuestionState(currentQuestion.id, { savedSummary: true });
+        }, 100);
+
+        // Resetar o estado após alguns segundos
+        setTimeout(() => {
+          updateQuestionState(currentQuestion.id, { savedSummary: false });
+        }, 3000);
+      } else {
+        alert('Erro ao salvar resumo. Tente novamente.');
+        updateQuestionState(currentQuestion.id, { savingSummary: false });
+      }
+    } catch (error) {
+      alert(`Erro ao salvar resumo: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      updateQuestionState(currentQuestion.id, { savingSummary: false });
+    }
+  };
 
   // Funções utilitárias para contar e extrair questões (copiadas do AITools)
   const countQuestions = (content: string): number => {
@@ -1169,25 +1301,88 @@ Crie questões relacionadas ao mesmo contexto legal (mesma lei e artigo). Retorn
 
                   {/* Histórico de conversa */}
                   {chatHistory.map((message, index) => (
-                    <div
-                      key={index}
-                      className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
+                    <div key={index}>
                       <div
-                        className={`max-w-3xl p-3 rounded-lg ${
-                          message.type === 'user'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-900'
-                        }`}
+                        className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
                       >
-                        {message.type === 'user' ? (
-                          <p className="text-sm whitespace-pre-wrap text-white">{message.message}</p>
-                        ) : (
-                          <div className="text-sm">
-                            <MarkdownRenderer content={message.message} />
-                          </div>
-                        )}
+                        <div
+                          className={`max-w-3xl p-3 rounded-lg ${
+                            message.type === 'user'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 text-gray-900'
+                          }`}
+                        >
+                          {message.type === 'user' ? (
+                            <p className="text-sm whitespace-pre-wrap text-white">{message.message}</p>
+                          ) : (
+                            <div className="text-sm">
+                              <MarkdownRenderer content={message.message} />
+                            </div>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Botão para salvar resumo - apenas para respostas de IA dos botões específicos */}
+                      {message.type === 'ai' && activeChatResponse &&
+                       activeChatResponse.content === message.message &&
+                       index === chatHistory.length - 1 && (
+                        <div className="flex justify-start mt-3">
+                          <div className="max-w-3xl">
+                            <div className="bg-white border border-gray-200 rounded-lg p-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <div>
+                                  <h4 className="text-sm font-medium text-gray-900">
+                                    Salvar Resumo no Banco
+                                  </h4>
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Esta resposta pode ser salva como resumo
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  if (!savingSummary && !savedSummary) {
+                                    handleSaveSummary();
+                                  }
+                                }}
+                                disabled={savingSummary || savedSummary}
+                                className={`flex items-center space-x-2 px-4 py-2 text-sm rounded-md transition-colors ${
+                                  savedSummary
+                                    ? 'bg-green-100 text-green-700 cursor-default'
+                                    : savingSummary
+                                    ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
+                                    : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                                }`}
+                              >
+                                {savedSummary ? (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    <span>Resumo Salvo</span>
+                                  </>
+                                ) : savingSummary ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    <span>Salvando...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Save className="h-4 w-4" />
+                                    <span>Salvar no Banco</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <div className="mt-3 p-2 bg-blue-50 rounded-lg">
+                                <p className="text-xs text-blue-700">
+                                  💡 <strong>Dica:</strong> Os resumos salvos aparecerão no Card Resumos e podem ser acessados por artigo.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
 
