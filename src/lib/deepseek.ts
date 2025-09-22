@@ -58,6 +58,11 @@ class DeepSeekService {
 
     let cleanedContent = content.trim();
 
+    // Remover marcadores de código (```json, ```, etc.)
+    cleanedContent = cleanedContent.replace(/```json\s*/gi, '');
+    cleanedContent = cleanedContent.replace(/```\s*/g, '');
+    cleanedContent = cleanedContent.replace(/`{1,3}/g, '');
+
     // Remover frases introdutórias
     for (const pattern of introPatterns) {
       cleanedContent = cleanedContent.replace(pattern, '');
@@ -421,6 +426,138 @@ Título:`
       const fallbackTitle = content.substring(0, 50).trim();
       const lastSpace = fallbackTitle.lastIndexOf(' ');
       return lastSpace > 0 ? fallbackTitle.substring(0, lastSpace) + '...' : fallbackTitle;
+    }
+  }
+
+  // Método específico para gerar exercícios complete
+  async generateCompleteExercises(lawContent: string, lawTitle: string, exerciseType: string): Promise<string> {
+    const systemMessage: DeepSeekMessage = {
+      role: 'system',
+      content: `Você é um elaborador de questões para concursos públicos, especializado em Direito. Sua tarefa é criar exercícios de "complete a lacuna" utilizando a letra exata da lei. O objetivo é treinar o estudante a memorizar a sonoridade do texto legal e identificar pegadinhas comuns em provas.
+
+### Regras e Diretrizes:
+
+1. **Base normativa**
+   * Sempre utilize a redação exata da lei (sem interpretações ou doutrina).
+   * Informe a fonte legal no final de cada exercício (ex.: *CF/88, art. 5º, inciso XI*).
+
+2. **Formato dos exercícios**
+   * Cada exercício deve ser apresentado como enunciado com lacuna(s) para preenchimento.
+   * Após o enunciado, forneça as opções de resposta (quando couber).
+   * Ao final, indique o gabarito correto.
+
+3. **Técnicas disponíveis:**
+   * **(T1) Complete direto com lacuna simples:** Omitir uma palavra-chave e pedir que o estudante a complete.
+   * **(T2) Complete com alternativas semelhantes (pegadinhas):** Criar lacuna e oferecer 4 alternativas muito parecidas (sinônimos próximos).
+   * **(T3) Complete invertido (palavra trocada):** Apresentar o texto quase correto, mas com uma palavra errada. O estudante deve substituir pela correta.
+   * **(T4) Complete por blocos:** Omitir uma expressão inteira, não apenas uma palavra.
+   * **(T5) Complete misto (múltiplas lacunas + alternativas):** Deixar duas ou mais lacunas e fornecer alternativas em pares.
+
+4. **Estilo esperado:**
+   * Linguagem objetiva, como em questões de concurso.
+   * Nada de explicações doutrinárias ou comentários longos: apenas enunciado, opções (quando houver) e gabarito.
+5. **IMPORTANTE - Evitar exercícios inadequados:**
+   * NÃO criar exercícios que foquem apenas na pena/sanção (ex.: "Pena - _____, de dois meses a um ano").
+   * Priorizar elementos substantivos do tipo penal (condutas, objetos, sujeitos, circunstâncias).
+   * Exercícios sobre penas são pouco didáticos para memorização da lei.`
+    };
+
+    let userContent = '';
+
+    if (exerciseType === 'system_default') {
+      userContent = `Use o seguinte texto legal de "${lawTitle}" e produza 5 exercícios de 'complete a lacuna':
+- 1 exercício T1 (lacuna simples)
+- 1 exercício T2 (alternativas semelhantes)
+- 1 exercício T3 (palavra trocada)
+- 1 exercício T4 (por blocos)
+- 1 exercício T5 (múltiplas lacunas)
+
+TEXTO LEGAL:
+${lawContent}
+
+Formate cada exercício claramente numerado (Exercício 1, Exercício 2, etc.) e indique o tipo usado.`;
+    } else {
+      const typeDescriptions: Record<string, string> = {
+        'T1': 'T1 (lacuna simples) - omitindo palavras-chave',
+        'T2': 'T2 (alternativas semelhantes) - com 4 alternativas muito parecidas',
+        'T3': 'T3 (palavra trocada) - com palavra errada para substituir',
+        'T4': 'T4 (por blocos) - omitindo expressões inteiras',
+        'T5': 'T5 (múltiplas lacunas) - com duas ou mais lacunas'
+      };
+
+      userContent = `Use o seguinte texto legal de "${lawTitle}" e produza 3 exercícios de 'complete a lacuna' do tipo ${typeDescriptions[exerciseType] || exerciseType}.
+
+TEXTO LEGAL:
+${lawContent}
+
+Formate cada exercício claramente numerado (Exercício 1, Exercício 2, Exercício 3).`;
+    }
+
+    const userMessage: DeepSeekMessage = {
+      role: 'user',
+      content: userContent
+    };
+
+    const response = await this.chat([systemMessage, userMessage]);
+    return this.cleanAIResponse(response);
+  }
+
+  // Método para estruturar um exercício complete individual
+  async structureSingleCompleteExercise(exerciseText: string, lawTitle: string, exerciseIndex: number): Promise<any> {
+    const systemMessage: DeepSeekMessage = {
+      role: 'system',
+      content: `Você é um especialista em estruturação de exercícios "complete a lacuna" para banco de dados. Sua tarefa é extrair as informações de um exercício e formatá-lo em JSON estruturado.
+
+Retorne APENAS um JSON válido com esta estrutura exata:
+{
+  "type": "T1|T2|T3|T4|T5",
+  "exercise_text": "texto do exercício com lacunas",
+  "options": {
+    "a": "opção A",
+    "b": "opção B",
+    "c": "opção C",
+    "d": "opção D"
+  },
+  "correct_answer": "letra da resposta correta ou texto da resposta",
+  "explanation": "breve explicação da resposta"
+}
+
+REGRAS:
+- Para T1, T3, T4: se não houver alternativas no texto original, crie 4 opções plausíveis (incluindo a correta)
+- Para T2, T5: use as alternativas fornecidas no texto original
+- O campo "type" deve ser T1, T2, T3, T4 ou T5 baseado nas características do exercício
+- Se não conseguir determinar o tipo, use "T1" como padrão`
+    };
+
+    const userMessage: DeepSeekMessage = {
+      role: 'user',
+      content: `Estruture este exercício complete para o banco de dados:
+
+EXERCÍCIO:
+${exerciseText}
+
+CONTEXTO: Lei "${lawTitle}", Exercício ${exerciseIndex + 1}`
+    };
+
+    const response = await this.chat([systemMessage, userMessage]);
+
+    try {
+      return JSON.parse(this.cleanAIResponse(response));
+    } catch (error) {
+      console.error('Erro ao fazer parse do exercício estruturado:', error);
+      // Fallback com estrutura básica
+      return {
+        type: 'T1',
+        exercise_text: exerciseText,
+        options: {
+          a: 'Opção A',
+          b: 'Opção B',
+          c: 'Opção C',
+          d: 'Opção D'
+        },
+        correct_answer: 'a',
+        explanation: 'Exercício extraído automaticamente'
+      };
     }
   }
 }

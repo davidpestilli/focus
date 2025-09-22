@@ -102,7 +102,7 @@ const getDisplaySubtitle = (element: LawElement) => {
 }
 
 function LawElementNode({ element, level, onSelect, isSelected }: LawElementNodeProps) {
-  const [isExpanded, setIsExpanded] = useState(level < 2) // Auto-expand first 2 levels
+  const [isExpanded, setIsExpanded] = useState(false) // All elements start collapsed
   const hasChildren = element.children && element.children.length > 0
 
   const handleToggle = () => {

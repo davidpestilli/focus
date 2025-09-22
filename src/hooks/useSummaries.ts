@@ -229,6 +229,70 @@ export const useSummaries = () => {
     }
   }
 
+  // Função para deletar múltiplos resumos
+  const deleteMultipleSummaries = async (ids: string[]): Promise<boolean> => {
+    if (!user) {
+      setError('Usuário não autenticado')
+      return false
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const { error } = await supabase
+        .from('summaries')
+        .delete()
+        .in('id', ids)
+
+      if (error) {
+        console.error('Erro ao deletar resumos:', error)
+        setError(error.message)
+        return false
+      }
+
+      return true
+    } catch (error) {
+      console.error('Erro ao deletar resumos:', error)
+      setError(error instanceof Error ? error.message : 'Erro desconhecido')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Função para atualizar um resumo
+  const updateSummary = async (id: string, updates: Partial<SummaryToSave>): Promise<boolean> => {
+    if (!user) {
+      setError('Usuário não autenticado')
+      return false
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const { error } = await supabase
+        .from('summaries')
+        .update(updates)
+        .eq('id', id)
+
+      if (error) {
+        console.error('Erro ao atualizar resumo:', error)
+        setError(error.message)
+        return false
+      }
+
+      return true
+    } catch (error) {
+      console.error('Erro ao atualizar resumo:', error)
+      setError(error instanceof Error ? error.message : 'Erro desconhecido')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Função para obter tradução dos tipos de resumo
   const getTypeTranslation = (type: Summary['type']): string => {
     const translations = {
@@ -248,6 +312,8 @@ export const useSummaries = () => {
     getSummariesByArticle,
     getSummaryById,
     deleteSummary,
+    deleteMultipleSummaries,
+    updateSummary,
     getTypeTranslation
   }
 }

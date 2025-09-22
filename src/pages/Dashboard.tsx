@@ -1,7 +1,7 @@
 import { useAuth } from '../contexts/AuthContext'
 import { useApp } from '../contexts/AppContext'
 import { useNavigate } from 'react-router-dom'
-import { Book, FileText, HelpCircle, Plus, Search, LogOut, BookOpen } from 'lucide-react'
+import { Book, FileText, HelpCircle, Plus, Search, LogOut, BookOpen, Target } from 'lucide-react'
 import TestConnection from '../components/TestConnection'
 
 export default function Dashboard() {
@@ -155,6 +155,27 @@ export default function Dashboard() {
                       </h3>
                       <p className="text-sm text-gray-500">
                         Acesse seus resumos organizados por lei
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer"
+                onClick={() => navigate('/complete-exercises')}
+              >
+                <div className="p-6">
+                  <div className="flex items-center">
+                    <div className="flex-shrink-0">
+                      <Target className="h-8 w-8 text-indigo-600" />
+                    </div>
+                    <div className="ml-4">
+                      <h3 className="text-lg font-medium text-gray-900">
+                        Exercícios Complete
+                      </h3>
+                      <p className="text-sm text-gray-500">
+                        Treine memorização com exercícios "complete a lacuna"
                       </p>
                     </div>
                   </div>

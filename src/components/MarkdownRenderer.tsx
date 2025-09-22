@@ -101,29 +101,60 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     let keyIndex = 0;
 
     while (remaining.length > 0) {
-      // Look for **bold** text
+      // Look for **bold** text first (more specific pattern)
       const boldMatch = remaining.match(/\*\*(.*?)\*\*/);
+      // Look for *italic* text (single asterisks)
+      const italicMatch = remaining.match(/\*([^*]+?)\*/);
 
-      if (boldMatch) {
-        const beforeBold = remaining.substring(0, boldMatch.index!);
-        const boldText = boldMatch[1];
-        const afterBold = remaining.substring(boldMatch.index! + boldMatch[0].length);
+      // Determine which match comes first
+      let firstMatch = null;
+      let isItalic = false;
 
-        // Add text before bold
-        if (beforeBold) {
-          parts.push(<span key={keyIndex++}>{beforeBold}</span>);
+      if (boldMatch && italicMatch) {
+        // Both found, use the one that appears first
+        if (boldMatch.index! < italicMatch.index!) {
+          firstMatch = boldMatch;
+          isItalic = false;
+        } else {
+          firstMatch = italicMatch;
+          isItalic = true;
+        }
+      } else if (boldMatch) {
+        firstMatch = boldMatch;
+        isItalic = false;
+      } else if (italicMatch) {
+        firstMatch = italicMatch;
+        isItalic = true;
+      }
+
+      if (firstMatch) {
+        const beforeMatch = remaining.substring(0, firstMatch.index!);
+        const matchText = firstMatch[1];
+        const afterMatch = remaining.substring(firstMatch.index! + firstMatch[0].length);
+
+        // Add text before match
+        if (beforeMatch) {
+          parts.push(<span key={keyIndex++}>{beforeMatch}</span>);
         }
 
-        // Add bold text
-        parts.push(
-          <strong key={keyIndex++} className="font-semibold text-gray-900">
-            {boldText}
-          </strong>
-        );
+        // Add formatted text
+        if (isItalic) {
+          parts.push(
+            <em key={keyIndex++} className="italic text-blue-700 font-medium">
+              {matchText}
+            </em>
+          );
+        } else {
+          parts.push(
+            <strong key={keyIndex++} className="font-semibold text-gray-900">
+              {matchText}
+            </strong>
+          );
+        }
 
-        remaining = afterBold;
+        remaining = afterMatch;
       } else {
-        // No more bold text, add remaining
+        // No more formatted text, add remaining
         parts.push(<span key={keyIndex++}>{remaining}</span>);
         break;
       }

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { MessageSquare, BookOpen, HelpCircle, Loader2, Save, CheckCircle, X } from 'lucide-react';
+import { MessageSquare, BookOpen, HelpCircle, Loader2, Save, CheckCircle, X, Target } from 'lucide-react';
 import { deepseekService } from '../lib/deepseek';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useQuestions, type QuestionToSave } from '../hooks/useQuestions';
 import { useSummaries, type SummaryToSave } from '../hooks/useSummaries';
+import { useCompleteExercises, type CompleteExerciseToSave } from '../hooks/useCompleteExercises';
 
 interface AIToolsProps {
   lawContent: string;
@@ -18,9 +19,11 @@ interface AIToolsProps {
   };
 }
 
-type ToolType = 'explain' | 'examples' | 'questions' | 'custom';
+type ToolType = 'explain' | 'examples' | 'questions' | 'custom' | 'complete';
 
 type QuestionType = 'system_default' | 'true_false' | 'multiple_choice' | 'essay';
+
+type CompleteType = 'system_default' | 'T1' | 'T2' | 'T3' | 'T4' | 'T5';
 
 interface AIResponse {
   type: ToolType;
@@ -39,15 +42,22 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
   const [savingSummary, setSavingSummary] = useState(false);
   const [savedSummary, setSavedSummary] = useState(false);
 
+  // Estados para exercícios complete
+  const [showCompleteTypeModal, setShowCompleteTypeModal] = useState(false);
+  const [savedCompleteExercises, setSavedCompleteExercises] = useState<Set<string>>(new Set());
+  const [savingCompleteExercises, setSavingCompleteExercises] = useState<Set<string>>(new Set());
+
   const { saveQuestion, generateTags, loading: savingQuestion, error: questionError } = useQuestions();
   const { saveSummary, getTypeTranslation } = useSummaries();
+  const { saveCompleteExercise, generateTags: generateCompleteExerciseTags } = useCompleteExercises();
 
   // Mapear o tipo da resposta para o tipo do resumo
   const typeMapping: Record<ToolType, 'explanation' | 'examples' | 'custom'> = {
     'explain': 'explanation',
     'examples': 'examples',
     'custom': 'custom',
-    'questions': 'explanation' // fallback (não deveria ser usado)
+    'questions': 'explanation', // fallback (não deveria ser usado)
+    'complete': 'explanation' // fallback (não deveria ser usado)
   };
 
   // Função para extrair uma questão específica do texto baseado no índice
@@ -202,6 +212,93 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     return { text: preview, type };
   };
 
+  // Função para contar quantos exercícios complete existem no texto
+  const countCompleteExercises = (content: string): number => {
+    // Contar por padrões comuns de exercícios complete
+    const exercisePatterns = [
+      /\*\*Exercício\s+\d+/gi,
+      /Exercício\s+\d+[:\.]?/gi,
+      /\*\*T\d+\s*-\s*Exercício\s+\d+/gi,
+      /\*\*\d+\s*[\-\.]/gi
+    ];
+
+    let maxCount = 0;
+    for (const pattern of exercisePatterns) {
+      const matches = content.match(pattern);
+      if (matches) {
+        maxCount = Math.max(maxCount, matches.length);
+      }
+    }
+
+    // Se ainda não encontrou, tentar contar por parágrafos substanciais
+    if (maxCount === 0) {
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+      maxCount = Math.min(paragraphs.length, 5); // Máximo 5 exercícios
+    }
+
+    return maxCount;
+  };
+
+  // Função para extrair texto de exercício complete específico
+  const extractCompleteExerciseText = (content: string, exerciseIndex: number): string => {
+    // Tentar detectar exercícios individuais
+    const exercisePatterns = [
+      /(?=\*\*Exercício\s+\d+)/gi,
+      /(?=\*\*T\d+\s*-\s*Exercício\s+\d+)/gi,
+      /(?=\*\*\d+\.\s*[^*]*?\*\*)/gi,
+      /(?=\d+\.\s*(?!$))/gi
+    ];
+
+    for (const pattern of exercisePatterns) {
+      const exercises = content.split(pattern).filter(e => {
+        const trimmed = e.trim();
+        return trimmed.length > 20 && !/^\d+[\.\-\s]*$/.test(trimmed);
+      });
+
+      if (exercises.length > exerciseIndex && exercises[exerciseIndex]) {
+        return exercises[exerciseIndex].trim();
+      }
+    }
+
+    // Fallback: dividir por quebras de linha duplas
+    const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 20);
+    if (paragraphs.length > exerciseIndex) {
+      return paragraphs[exerciseIndex].trim();
+    }
+
+    return '';
+  };
+
+  // Função para obter informações de um exercício complete para display
+  const getCompleteExerciseInfo = (content: string, exerciseIndex: number): { text: string; type: string } => {
+    const exerciseText = extractCompleteExerciseText(content, exerciseIndex);
+
+    let type = 'Complete';
+
+    // Detectar tipo por características do texto
+    if (exerciseText.includes('T1') || exerciseText.includes('lacuna simples')) {
+      type = 'T1 - Lacuna Simples';
+    } else if (exerciseText.includes('T2') || exerciseText.includes('alternativas semelhantes')) {
+      type = 'T2 - Alternativas Semelhantes';
+    } else if (exerciseText.includes('T3') || exerciseText.includes('palavra trocada')) {
+      type = 'T3 - Palavra Trocada';
+    } else if (exerciseText.includes('T4') || exerciseText.includes('por blocos')) {
+      type = 'T4 - Complete por Blocos';
+    } else if (exerciseText.includes('T5') || exerciseText.includes('múltiplas lacunas')) {
+      type = 'T5 - Múltiplas Lacunas';
+    }
+
+    // Extrair os primeiros 100 caracteres do exercício para preview
+    const preview = exerciseText
+      .replace(/\*\*Exercício\s+\d+\*\*\s*/i, '')
+      .replace(/\*\*T\d+\s*-\s*Exercício\s+\d+\*\*\s*/i, '')
+      .replace(/Exercício\s+\d+[:\.]?\s*/i, '')
+      .replace(/^\d+\s*[\-\.]\s*/, '')
+      .substring(0, 100);
+
+    return { text: preview, type };
+  };
+
   // Função para detectar artigo(s) baseado no conteúdo da questão
   const detectArticleFromQuestion = (questionText: string, correctAnswer: string, explanation: string, fallbackArticle: string): string => {
     const fullText = `${questionText} ${correctAnswer} ${explanation}`.toLowerCase();
@@ -319,6 +416,86 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     }
   };
 
+  // Função para salvar exercício complete individual
+  const handleSaveCompleteExercise = async (exerciseIndex: number) => {
+    if (!activeResponse || activeResponse.type !== 'complete' || !selectedElement) return;
+
+    const exerciseId = `${exerciseIndex}`;
+
+    // Verificar se já está salvo ou sendo salvo
+    if (savedCompleteExercises.has(exerciseId) || savingCompleteExercises.has(exerciseId)) return;
+
+    try {
+      // Marcar como "salvando"
+      setSavingCompleteExercises(prev => new Set([...prev, exerciseId]));
+
+      // Extrair o texto do exercício específico
+      const exerciseText = extractCompleteExerciseText(activeResponse.content, exerciseIndex);
+
+      if (!exerciseText) {
+        console.error('Não foi possível extrair o texto do exercício');
+        return;
+      }
+
+      // Enviar para o DeepSeek estruturar
+      const structuredExercise = await deepseekService.structureSingleCompleteExercise(exerciseText, lawTitle, exerciseIndex);
+
+      // Preparar dados para salvamento
+      const tags = generateCompleteExerciseTags(lawTitle, selectedElement.element_type, selectedElement.content);
+      let fallbackArticleNumber = selectedElement.element_number || '';
+      if (fallbackArticleNumber.includes('-')) {
+        fallbackArticleNumber = `Art. ${fallbackArticleNumber.split('-')[0]}`;
+      }
+
+      // Detectar artigo(s) baseado no conteúdo do exercício
+      const detectedArticleNumber = detectArticleFromQuestion(
+        structuredExercise.exercise_text,
+        structuredExercise.correct_answer,
+        structuredExercise.explanation || '',
+        fallbackArticleNumber
+      );
+
+      console.log('🔍 Detecção de Artigo (Complete):', {
+        exerciseText: structuredExercise.exercise_text,
+        correctAnswer: structuredExercise.correct_answer,
+        explanation: structuredExercise.explanation,
+        fallbackArticleNumber,
+        detectedArticleNumber
+      });
+
+      const exerciseToSave: CompleteExerciseToSave = {
+        law_element_id: selectedElement.id,
+        law_id: selectedElement.law_id,
+        law_name: lawTitle,
+        article_number: detectedArticleNumber,
+        type: structuredExercise.type as 'T1' | 'T2' | 'T3' | 'T4' | 'T5',
+        exercise_text: structuredExercise.exercise_text,
+        options: structuredExercise.options || undefined,
+        correct_answer: structuredExercise.correct_answer,
+        explanation: { general: structuredExercise.explanation },
+        tags,
+        topic: tags[0] || 'geral'
+      };
+
+      console.log('Exercício estruturado pelo DeepSeek:', structuredExercise);
+      console.log('Dados preparados para salvamento:', exerciseToSave);
+
+      const success = await saveCompleteExercise(exerciseToSave);
+      if (success) {
+        setSavedCompleteExercises(prev => new Set([...prev, exerciseId]));
+      }
+    } catch (error) {
+      console.error('Erro ao estruturar e salvar exercício complete:', error);
+    } finally {
+      // Remover do estado "salvando"
+      setSavingCompleteExercises(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(exerciseId);
+        return newSet;
+      });
+    }
+  };
+
   // Função para salvar resumo
   const handleSaveSummary = async () => {
     if (!activeResponse || !selectedElement) return;
@@ -399,12 +576,52 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
     }
   };
 
+  const handleCompleteTypeSelect = async (completeType: CompleteType) => {
+    setShowCompleteTypeModal(false);
+    if (loading) return;
+
+    setLoading(true);
+
+    try {
+      let response: string;
+
+      if (completeType === 'system_default') {
+        // Gerar 1 de cada tipo (T1, T2, T3, T4, T5) = 5 exercícios total
+        response = await deepseekService.generateCompleteExercises(lawContent, lawTitle, 'system_default');
+      } else {
+        // Gerar 3 exercícios do tipo específico
+        response = await deepseekService.generateCompleteExercises(lawContent, lawTitle, completeType);
+      }
+
+      setActiveResponse({
+        type: 'complete',
+        content: response,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      console.error('Erro ao gerar exercícios complete:', error);
+      setActiveResponse({
+        type: 'complete',
+        content: `Erro ao processar solicitação: ${error instanceof Error ? error.message : 'Erro desconhecido'}`,
+        timestamp: new Date()
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleToolClick = async (toolType: ToolType, customQ?: string) => {
     if (loading) return;
 
     // Para questões, mostrar modal de seleção de tipo
     if (toolType === 'questions') {
       setShowQuestionTypeModal(true);
+      return;
+    }
+
+    // Para exercícios complete, mostrar modal de seleção de tipo
+    if (toolType === 'complete') {
+      setShowCompleteTypeModal(true);
       return;
     }
 
@@ -457,6 +674,7 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
       case 'explain': return 'Explicação';
       case 'examples': return 'Exemplos Práticos';
       case 'questions': return 'Questões Geradas';
+      case 'complete': return 'Exercícios Complete Gerados';
       case 'custom': return 'Consulta Personalizada';
       default: return 'Resposta';
     }
@@ -494,6 +712,16 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
           >
             <HelpCircle className="h-4 w-4 mr-2" />
             Gerar questões
+            {loading && <Loader2 className="h-4 w-4 ml-auto animate-spin" />}
+          </button>
+
+          <button
+            onClick={() => handleToolClick('complete')}
+            disabled={loading}
+            className="w-full text-left px-3 py-2 text-sm bg-indigo-50 hover:bg-indigo-100 rounded-md text-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+          >
+            <Target className="h-4 w-4 mr-2" />
+            Gere exercícios "complete"
             {loading && <Loader2 className="h-4 w-4 ml-auto animate-spin" />}
           </button>
 
@@ -642,8 +870,81 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
               </div>
             )}
 
-            {/* Botão para salvar resumos quando o tipo NÃO é 'questions' */}
-            {activeResponse.type !== 'questions' && selectedElement && (
+            {/* Botões para salvar exercícios complete quando o tipo é 'complete' */}
+            {activeResponse.type === 'complete' && selectedElement && (
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-medium text-gray-900">
+                    Salvar Exercícios Complete no Banco
+                  </h4>
+                  <span className="text-xs text-gray-500">
+                    {countCompleteExercises(activeResponse.content)} exercícios detectados
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {Array.from({ length: countCompleteExercises(activeResponse.content) }, (_, index) => {
+                    const exerciseInfo = getCompleteExerciseInfo(activeResponse.content, index);
+                    return (
+                      <div key={index} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex-1 mr-3">
+                          <p className="text-sm text-gray-900 line-clamp-2">
+                            Exercício {index + 1} ({exerciseInfo.type}): {exerciseInfo.text}
+                            {exerciseInfo.text.length > 100 ? '...' : ''}
+                          </p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            <span className="px-2 py-1 bg-indigo-100 text-indigo-800 text-xs rounded-full">
+                              #{exerciseInfo.type.toLowerCase().replace(' ', '_')}
+                            </span>
+                            <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                              #complete
+                            </span>
+                          </div>
+                        </div>
+
+                      <button
+                        onClick={() => handleSaveCompleteExercise(index)}
+                        disabled={savingCompleteExercises.has(`${index}`) || savedCompleteExercises.has(`${index}`)}
+                        className={`flex items-center space-x-2 px-3 py-2 text-sm rounded-md transition-colors ${
+                          savedCompleteExercises.has(`${index}`)
+                            ? 'bg-green-100 text-green-700 cursor-default'
+                            : savingCompleteExercises.has(`${index}`)
+                            ? 'bg-yellow-100 text-yellow-700 cursor-not-allowed'
+                            : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                        }`}
+                      >
+                        {savedCompleteExercises.has(`${index}`) ? (
+                          <>
+                            <CheckCircle className="h-4 w-4" />
+                            <span>Salvo</span>
+                          </>
+                        ) : savingCompleteExercises.has(`${index}`) ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Estruturando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4" />
+                            <span>Incluir no Banco</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 p-3 bg-indigo-50 rounded-lg">
+                  <p className="text-xs text-indigo-700">
+                    🎯 <strong>Dica:</strong> Os exercícios complete salvos aparecerão no Card Exercícios Complete e podem ser usados para treinar memorização da lei.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Botão para salvar resumos quando o tipo NÃO é 'questions' e NÃO é 'complete' */}
+            {activeResponse.type !== 'questions' && activeResponse.type !== 'complete' && selectedElement && (
               <div className="mt-6 pt-4 border-t border-gray-200">
                 <div className="flex items-center justify-between mb-4">
                   <div>
@@ -768,6 +1069,104 @@ export function AITools({ lawContent, lawTitle, selectedElement }: AIToolsProps)
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
               <button
                 onClick={() => setShowQuestionTypeModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Seleção de Tipo de Exercício Complete */}
+      {showCompleteTypeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            {/* Header do Modal */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Tipo de Exercícios Complete
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Selecione o tipo de exercício "complete a lacuna" que deseja gerar
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCompleteTypeModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Opções */}
+            <div className="p-6 space-y-3">
+              <button
+                onClick={() => handleCompleteTypeSelect('system_default')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">Padrão do Sistema</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  1 exercício de cada tipo: T1, T2, T3, T4 e T5 (5 exercícios total)
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleCompleteTypeSelect('T1')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">T1 - Lacuna Simples</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  3 exercícios omitindo palavras-chave para digitação livre
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleCompleteTypeSelect('T2')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">T2 - Alternativas Semelhantes</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  3 exercícios com lacunas e 4 alternativas muito parecidas (pegadinhas)
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleCompleteTypeSelect('T3')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">T3 - Palavra Trocada</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  3 exercícios com palavra errada para substituir pela correta
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleCompleteTypeSelect('T4')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">T4 - Complete por Blocos</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  3 exercícios omitindo expressões inteiras, não apenas palavras
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleCompleteTypeSelect('T5')}
+                className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <div className="font-medium text-gray-900">T5 - Múltiplas Lacunas</div>
+                <div className="text-sm text-gray-600 mt-1">
+                  3 exercícios com duas ou mais lacunas e alternativas em pares
+                </div>
+              </button>
+            </div>
+
+            {/* Footer do Modal */}
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setShowCompleteTypeModal(false)}
                 className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
               >
                 Cancelar
